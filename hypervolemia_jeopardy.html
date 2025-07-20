@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hypervolemia Jeopardy Game Board</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0d1117; /* Dark background for a 'game show' feel */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .jeopardy-board {
+            background-color: #1a202c; /* Darker blue-grey */
+            border-radius: 1.5rem; /* More rounded corners */
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.5);
+            padding: 2rem;
+            max-width: 1200px; /* Max width for desktop */
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            position: relative; /* For modal positioning */
+        }
+        .jeopardy-title {
+            font-size: 2.5rem; /* Larger title */
+            font-weight: 700;
+            color: #e2e8f0; /* Light text */
+            text-align: center;
+            margin-bottom: 1.5rem;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.7);
+        }
+        .grid-container {
+            display: grid;
+            grid-template-columns: repeat(6, 1fr); /* 6 columns for categories + points */
+            gap: 0.5rem; /* Smaller gap for tighter grid */
+            width: 100%;
+        }
+        .grid-header, .grid-item {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 0.8rem 0.5rem; /* Adjusted padding */
+            border-radius: 0.5rem; /* Slightly rounded cells */
+            font-weight: 600;
+            text-align: center;
+            transition: transform 0.2s ease-in-out, background-color 0.2s ease-in-out;
+            cursor: pointer;
+            user-select: none; /* Prevent text selection */
+        }
+        .grid-header {
+            background-color: #2c5282; /* Darker blue for headers */
+            color: #e2e8f0;
+            font-size: 1rem; /* Smaller font for headers */
+            min-height: 60px; /* Ensure consistent height for headers */
+        }
+        .grid-item {
+            background-color: #4299e1; /* Vibrant blue for points */
+            color: #fff;
+            font-size: 1.5rem; /* Larger font for points */
+            min-height: 80px; /* Ensure consistent height for point cells */
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+        }
+        .grid-item:hover:not(.used) {
+            transform: translateY(-3px);
+            background-color: #63b3ed; /* Lighter blue on hover */
+        }
+        .grid-item.used {
+            background-color: #5a6270; /* Grey out used items */
+            cursor: not-allowed;
+            box-shadow: none;
+            transform: none;
+        }
+        /* First column (categories) styling */
+        .grid-container > div:nth-child(6n + 1) {
+            background-color: #3182ce; /* Slightly different blue for category names */
+            color: #e2e8f0;
+            font-size: 1rem; /* Smaller font for category names */
+            font-weight: 700;
+            min-height: 80px; /* Match point cell height */
+            cursor: default; /* Not clickable */
+        }
+
+        /* Modal Styling */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s ease-in-out, visibility 0.3s ease-in-out;
+        }
+        .modal-overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+        .modal-content {
+            background-color: #1a202c;
+            color: #e2e8f0;
+            border-radius: 1rem;
+            padding: 2rem;
+            max-width: 700px;
+            width: 90%;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.7);
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            transform: scale(0.9);
+            transition: transform 0.3s ease-in-out;
+        }
+        .modal-overlay.active .modal-content {
+            transform: scale(1);
+        }
+        .modal-question {
+            font-size: 1.8rem;
+            font-weight: 600;
+            text-align: center;
+            margin-bottom: 1rem;
+        }
+        .modal-answer, .modal-rationale {
+            font-size: 1.1rem;
+            line-height: 1.5;
+            text-align: left;
+        }
+        .modal-answer strong {
+            color: #4299e1;
+        }
+        .modal-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 1rem;
+            margin-top: 1.5rem;
+        }
+        .modal-button {
+            background-color: #4299e1;
+            color: white;
+            padding: 0.8rem 1.5rem;
+            border-radius: 0.75rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s ease-in-out, transform 0.2s ease-in-out;
+            border: none;
+        }
+        .modal-button:hover {
+            background-color: #63b3ed;
+            transform: translateY(-2px);
+        }
+        .modal-button:disabled {
+            background-color: #5a6270;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* Responsive adjustments for modal */
+        @media (max-width: 768px) {
+            .modal-question {
+                font-size: 1.5rem;
+            }
+            .modal-answer, .modal-rationale {
+                font-size: 1rem;
+            }
+            .modal-content {
+                padding: 1.5rem;
+            }
+        }
+        @media (max-width: 480px) {
+            .modal-question {
+                font-size: 1.2rem;
+            }
+            .modal-answer, .modal-rationale {
+                font-size: 0.9rem;
+            }
+            .modal-content {
+                padding: 1rem;
+            }
+            .modal-button {
+                padding: 0.6rem 1rem;
+                font-size: 0.9rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="jeopardy-board">
+        <div class="jeopardy-title">Hypervolemia Jeopardy: The Fluid Overload Challenge!</div>
+        <div class="grid-container" id="jeopardyGrid">
+            <!-- Headers (Point Values) -->
+            <div class="grid-header">Category</div>
+            <div class="grid-header">100</div>
+            <div class="grid-header">200</div>
+            <div class="grid-header">300</div>
+            <div class="grid-header">400</div>
+            <div class="grid-header">500</div>
+
+            <!-- Row 1: Fluid Balance Basics -->
+            <div class="grid-item category-name" data-category="Fluid Balance Basics">Fluid Balance Basics</div>
+            <div class="grid-item" data-category="Fluid Balance Basics" data-points="100">100</div>
+            <div class="grid-item" data-category="Fluid Balance Basics" data-points="200">200</div>
+            <div class="grid-item" data-category="Fluid Balance Basics" data-points="300">300</div>
+            <div class="grid-item" data-category="Fluid Balance Basics" data-points="400">400</div>
+            <div class="grid-item" data-category="Fluid Balance Basics" data-points="500">500</div>
+
+            <!-- Row 2: Assessment Clues -->
+            <div class="grid-item category-name" data-category="Assessment Clues">Assessment Clues</div>
+            <div class="grid-item" data-category="Assessment Clues" data-points="100">100</div>
+            <div class="grid-item" data-category="Assessment Clues" data-points="200">200</div>
+            <div class="grid-item" data-category="Assessment Clues" data-points="300">300</div>
+            <div class="grid-item" data-category="Assessment Clues" data-points="400">400</div>
+            <div class="grid-item" data-category="Assessment Clues" data-points="500">500</div>
+
+            <!-- Row 3: Causes & Risk Factors -->
+            <div class="grid-item category-name" data-category="Causes & Risk Factors">Causes & Risk Factors</div>
+            <div class="grid-item" data-category="Causes & Risk Factors" data-points="100">100</div>
+            <div class="grid-item" data-category="Causes & Risk Factors" data-points="200">200</div>
+            <div class="grid-item" data-category="Causes & Risk Factors" data-points="300">300</div>
+            <div class="grid-item" data-category="Causes & Risk Factors" data-points="400">400</div>
+            <div class="grid-item" data-category="Causes & Risk Factors" data-points="500">500</div>
+
+            <!-- Row 4: Nursing Interventions -->
+            <div class="grid-item category-name" data-category="Nursing Interventions">Nursing Interventions</div>
+            <div class="grid-item" data-category="Nursing Interventions" data-points="100">100</div>
+            <div class="grid-item" data-category="Nursing Interventions" data-points="200">200</div>
+            <div class="grid-item" data-category="Nursing Interventions" data-points="300">300</div>
+            <div class="grid-item" data-category="Nursing Interventions" data-points="400">400</div>
+            <div class="grid-item" data-category="Nursing Interventions" data-points="500">500</div>
+
+            <!-- Row 5: Patient Education & Discharge -->
+            <div class="grid-item category-name" data-category="Patient Discharge and Focus">Patient Discharge and Focus</div>
+            <div class="grid-item" data-category="Patient Discharge and Focus" data-points="100">100</div>
+            <div class="grid-item" data-category="Patient Discharge and Focus" data-points="200">200</div>
+            <div class="grid-item" data-category="Patient Discharge and Focus" data-points="300">300</div>
+            <div class="grid-item" data-category="Patient Discharge and Focus" data-points="400">400</div>
+            <div class="grid-item" data-category="Patient Discharge and Focus" data-points="500">500</div>
+
+            <!-- Row 6: Pharmacology Focus -->
+            <div class="grid-item category-name" data-category="Pharmacology Focus">Pharmacology Focus</div>
+            <div class="grid-item" data-category="Pharmacology Focus" data-points="100">100</div>
+            <div class="grid-item" data-category="Pharmacology Focus" data-points="200">200</div>
+            <div class="grid-item" data-category="Pharmacology Focus" data-points="300">300</div>
+            <div class="grid-item" data-category="Pharmacology Focus" data-points="400">400</div>
+            <div class="grid-item" data-category="Pharmacology Focus" data-points="500">500</div>
+        </div>
+    </div>
+
+    <!-- Modal for Questions and Answers -->
+    <div class="modal-overlay" id="questionModal">
+        <div class="modal-content">
+            <div class="modal-question" id="modalQuestion"></div>
+            <div class="modal-answer" id="modalAnswer" style="display: none;"></div>
+            <div class="modal-rationale" id="modalRationale" style="display: none;"></div>
+            <div class="modal-buttons">
+                <button class="modal-button" id="revealAnswerBtn">Reveal Answer</button>
+                <button class="modal-button" id="closeModalBtn">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Data structure for all Jeopardy questions, answers, and rationales
+        const jeopardyQuestions = {
+            "Fluid Balance Basics": {
+                100: {
+                    question: "This term describes a state where the body has too much fluid in the extracellular compartment.",
+                    answer: "What is hypervolemia (or fluid volume excess)?",
+                    rationale: "Hypervolemia, or fluid volume excess, occurs when there is an excessive amount of fluid in the extracellular compartment of the body. This can lead to increased blood volume and fluid accumulation in tissues (Cleveland Clinic, 2023)."
+                },
+                200: {
+                    question: "This physiological process, primarily performed by the kidneys, is the main way the body regulates fluid balance by filtering blood and producing urine.",
+                    answer: "What are the kidneys (or renal function)?",
+                    rationale: "The kidneys are vital organs that maintain fluid and electrolyte balance by filtering waste products and excess water from the blood to produce urine, thereby regulating the body's fluid volume (National Kidney Foundation, n.d.)."
+                },
+                300: {
+                    question: "This hormone, released by the posterior pituitary gland, primarily acts on the kidneys to increase water reabsorption, thus conserving fluid.",
+                    answer: "What is Antidiuretic Hormone (ADH) or Vasopressin?",
+                    rationale: "Antidiuretic Hormone (ADH), also known as vasopressin, helps regulate the amount of water in the body. It signals the kidneys to reabsorb more water, which increases blood volume and decreases urine output (MedlinePlus, 2023)."
+                },
+                400: {
+                    question: "This is the force exerted by fluid within a compartment, such as blood pressure, that pushes fluid out of capillaries into the interstitial space.",
+                    answer: "What is hydrostatic pressure?",
+                    rationale: "Hydrostatic pressure is the pressure exerted by a fluid within a closed system. In the capillaries, it's the blood pressure that pushes fluid out of the blood vessels and into the surrounding tissues (National Cancer Institute, n.d.)."
+                },
+                500: {
+                    question: "This term refers to the concentration of solutes in body fluid, and it is typically decreased in hypervolemia due to dilution.",
+                    answer: "What is serum osmolality?",
+                    rationale: "Serum osmolality measures the concentration of chemical particles in the fluid part of blood. In hypervolemia, excess water dilutes these particles, leading to a lower serum osmolality (Mayo Clinic, 2023a)."
+                }
+            },
+            "Assessment Clues": {
+                100: {
+                    question: "This visible sign of fluid overload is characterized by swelling, often in the extremities, that leaves an indentation after pressure is applied.",
+                    answer: "What is pitting edema?",
+                    rationale: "Pitting edema is a common sign of fluid retention, particularly in the legs, ankles, and feet. When pressure is applied to the swollen area, an indentation (or 'pit') remains for a few seconds (Mayo Clinic, 2023b)."
+                },
+                200: {
+                    question: "When assessing a patient with suspected hypervolemia, the nurse might observe this distention in the neck veins when the patient is positioned at a 45-degree angle.",
+                    answer: "What is Jugular Venous Distention (JVD)?",
+                    rationale: "Jugular venous distention (JVD) indicates increased pressure in the venous system, often due to fluid overload, causing the jugular veins in the neck to bulge (Cleveland Clinic, 2022)."
+                },
+                300: {
+                    question: "Auscultation of the lungs in a patient with hypervolemia would most likely reveal these adventitious breath sounds, indicating fluid in the alveoli.",
+                    answer: "What are crackles (or rales)?",
+                    rationale: "Crackles (also known as rales) are abnormal lung sounds heard during breathing, often described as bubbling or crackling. They are a common sign of fluid in the air sacs (alveoli) of the lungs, as seen in conditions like pulmonary edema due to fluid overload (MedlinePlus, 2022)."
+                },
+                400: {
+                    question: "A sudden, significant increase in this daily measurement is the most reliable indicator of fluid volume status in a patient with hypervolemia.",
+                    answer: "What is daily weight?",
+                    rationale: "Daily weights are considered the most accurate and sensitive indicator of fluid balance. A rapid weight gain (e.g., more than 2-3 pounds in a day or two) can signify fluid retention (American Heart Association, 2023a)."
+                },
+                500: {
+                    question: "This abnormal heart sound, often described as a 'Kentucky' gallop, can be heard in patients with severe fluid overload and heart failure.",
+                    answer: "What is an S3 gallop?",
+                    rationale: "An S3 gallop is an extra heart sound that can occur in conditions of fluid overload, such as heart failure, due to rapid filling of a stiff or overloaded ventricle (American Heart Association, 2023b)."
+                }
+            },
+            "Causes & Risk Factors": {
+                100: {
+                    question: "This chronic condition, where the heart cannot pump enough blood to meet the body's needs, is a very common cause of hypervolemia.",
+                    answer: "What is heart failure (or congestive heart failure - CHF)?",
+                    rationale: "Heart failure is a primary cause of hypervolemia because the weakened heart cannot effectively pump blood, leading to a backup of fluid in the lungs and other parts of the body (Centers for Disease Control and Prevention, 2023)."
+                },
+                200: {
+                    question: "Impaired function of these organs leads to the body's inability to excrete excess fluid and waste products, resulting in hypervolemia.",
+                    answer: "What are the kidneys (or renal failure/disease)?",
+                    rationale: "When the kidneys are damaged or fail, they lose their ability to remove excess fluid, sodium, and waste products from the body, leading to fluid overload (National Institute of Diabetes and Digestive and Kidney Diseases, 2023)."
+                },
+                300: {
+                    question: "Administering too much of these intravenous solutions too rapidly can directly cause iatrogenic hypervolemia.",
+                    answer: "What are isotonic IV fluids (e.g., Normal Saline, Lactated Ringer's)?",
+                    rationale: "Over-administration of intravenous fluids, particularly isotonic solutions like normal saline, can lead to fluid volume overload, especially in patients with compromised cardiac or renal function (StatPearls, 2024a)."
+                },
+                400: {
+                    question: "This severe liver condition can lead to hypervolemia due to decreased albumin production and portal hypertension.",
+                    answer: "What is cirrhosis (or liver failure)?",
+                    rationale: "Liver cirrhosis can cause fluid retention and hypervolemia due to impaired albumin synthesis (leading to fluid shifts) and increased pressure in the portal venous system (portal hypertension), contributing to ascites and edema (Mayo Clinic, 2023c)."
+                },
+                500: {
+                    question: "This hormonal disorder, characterized by excessive secretion of ADH, can lead to dilutional hyponatremia and fluid overload.",
+                    answer: "What is Syndrome of Inappropriate Antidiuretic Hormone (SIADH)?",
+                    rationale: "SIADH is a condition where the body produces too much antidiuretic hormone (ADH), causing the kidneys to retain too much water. This leads to fluid overload and dilutional hyponatremia (low sodium due to excess water) (National Institute of Diabetes and Digestive and Kidney Diseases, 2024)."
+                }
+            },
+            "Nursing Interventions": {
+                100: {
+                    question: "This essential daily intervention involves measuring and recording all fluids consumed and excreted by the patient.",
+                    answer: "What is Intake and Output (I&O) monitoring?",
+                    rationale: "Accurate intake and output (I&O) monitoring is fundamental for assessing a patient's fluid balance. It helps nurses track fluid retention or loss and evaluate the effectiveness of interventions (RegisteredNurseRN.com, n.d.)."
+                },
+                200: {
+                    question: "The nurse should implement this dietary modification to limit the amount of sodium, which causes the body to retain water.",
+                    answer: "What is sodium restriction (or low-sodium diet)?",
+                    rationale: "Sodium restriction is a key dietary intervention for hypervolemia because sodium causes the body to hold onto water. Limiting sodium intake helps the body excrete excess fluid (American Heart Association, 2023c)."
+                },
+                300: {
+                    question: "To reduce venous return to the heart and alleviate pulmonary congestion, the nurse should position the patient with hypervolemia in this position.",
+                    answer: "What is High Fowler's position?",
+                    rationale: "Positioning a patient with hypervolemia in High Fowler's (sitting upright) uses gravity to reduce venous return to the heart and lungs, which can alleviate shortness of breath and improve respiratory effort (StatPearls, 2024b)."
+                },
+                400: {
+                    question: "When administering IV fluids to a patient at risk for hypervolemia, the nurse should use this type of pump to ensure precise control over the infusion rate.",
+                    answer: "What is an infusion pump (or IV pump)?",
+                    rationale: "An infusion pump ensures accurate and controlled delivery of intravenous fluids. This precision is critical to prevent rapid fluid administration that could worsen fluid overload, especially in vulnerable patients (Cleveland Clinic, n.d.)."
+                },
+                500: {
+                    question: "To prevent skin breakdown in edematous areas, the nurse should perform this intervention frequently and apply a protective barrier.",
+                    answer: "What is frequent repositioning and application of barrier cream?",
+                    rationale: "Edematous skin is fragile and prone to breakdown. Frequent repositioning relieves pressure, and applying barrier creams protects the skin from moisture-associated damage, both crucial for maintaining skin integrity (National Pressure Injury Advisory Panel, n.d.)."
+                }
+            },
+            "Patient Discharge and Focus": {
+                100: {
+                    question: "When teaching a patient with hypervolemia about fluid restriction, the nurse should instruct them to measure all liquids, including this common beverage.",
+                    answer: "What is water (or coffee/tea/juice)?",
+                    rationale: "Patients on fluid restriction must meticulously measure all oral fluid intake, including water, coffee, tea, juice, and foods that melt to liquid (e.g., ice, gelatin), to prevent exceeding their prescribed limit (American Heart Association, 2023a)."
+                },
+                200: {
+                    question: "The nurse should instruct a patient with hypervolemia to report a weight gain of more than this amount over 1-2 days, as it indicates fluid retention.",
+                    answer: "What is 2-3 pounds (or 1-1.5 kg)?",
+                    rationale: "Patients with fluid retention should be taught to weigh themselves daily and report a weight gain of 2-3 pounds (1-1.5 kg) or more in a day or two, as this is a key indicator of worsening fluid overload (American Heart Association, 2023a)."
+                },
+                300: {
+                    question: "To help a patient manage thirst during fluid restriction, the nurse can suggest strategies like rinsing the mouth with cold water or sucking on these.",
+                    answer: "What are hard candies or ice chips?",
+                    rationale: "Managing thirst during fluid restriction can be challenging. Sucking on hard candies, chewing gum, rinsing the mouth with cold water, or consuming small amounts of ice chips can help alleviate thirst without adding significant fluid volume (Mayo Clinic, 2023d)."
+                },
+                400: {
+                    question: "The nurse should teach a patient with hypervolemia to read food labels carefully to identify hidden sources of this electrolyte, which contributes to fluid retention.",
+                    answer: "What is sodium?",
+                    rationale: "Sodium is a major contributor to fluid retention. Patients need to be educated on how to read food labels to identify and limit hidden sources of sodium in processed foods, condiments, and restaurant meals (American Heart Association, 2023c)."
+                },
+                500: {
+                    question: "Before discharge, the nurse must ensure the patient with hypervolemia understands the purpose, dosage, and potential side effects of this class of medications, which they will likely take at home.",
+                    answer: "What are diuretics?",
+                    rationale: "Diuretics are crucial for managing fluid overload. Patients must understand the purpose of their diuretic medication, correct dosage, timing, and potential side effects (e.g., dizziness, muscle cramps, electrolyte imbalances) to ensure safe and effective self-management at home (Mayo Clinic, 2023e)."
+                }
+            },
+            "Pharmacology Focus": {
+                100: {
+                    question: "This common class of diuretics, such as furosemide (Lasix), works by inhibiting sodium and chloride reabsorption in the loop of Henle, leading to significant fluid excretion.",
+                    answer: "What are loop diuretics?",
+                    rationale: "Loop diuretics, like furosemide, are potent medications that work in the loop of Henle in the kidneys to increase the excretion of sodium, chloride, and water, making them highly effective for treating fluid overload (Mayo Clinic, 2023e)."
+                },
+                200: {
+                    question: "When administering loop diuretics, the nurse must closely monitor for this electrolyte imbalance, which can lead to cardiac dysrhythmias.",
+                    answer: "What is hypokalemia (low potassium)?",
+                    rationale: "Loop diuretics can cause significant loss of potassium through the urine. Nurses must monitor potassium levels closely, as hypokalemia can lead to dangerous cardiac arrhythmias and muscle weakness (Mayo Clinic, 2023e)."
+                },
+                300: {
+                    question: "This less potent class of diuretics, such as hydrochlorothiazide, works in the distal convoluted tubule and is often used for mild to moderate fluid retention.",
+                    answer: "What are thiazide diuretics?",
+                    rationale: "Thiazide diuretics, such as hydrochlorothiazide, are commonly used for mild to moderate fluid retention and hypertension. They work in the distal convoluted tubule of the kidneys to increase sodium and water excretion (Mayo Clinic, 2023e)."
+                },
+                400: {
+                    question: "This potassium-sparing diuretic, often used in conjunction with loop diuretics, works by blocking aldosterone in the collecting duct, helping to retain potassium.",
+                    answer: "What is spironolactone (Aldactone)?",
+                    rationale: "Spironolactone is a potassium-sparing diuretic that works by blocking the effects of aldosterone, a hormone that promotes sodium and water retention. This action helps excrete fluid while conserving potassium (Mayo Clinic, 2023e)."
+                },
+                500: {
+                    question: "Before administering a diuretic, the nurse should always assess the patient's blood pressure and this specific electrolyte level to prevent adverse effects.",
+                    answer: "What is potassium?",
+                    rationale: "Before administering diuretics, nurses should assess the patient's blood pressure (as diuretics can cause hypotension) and potassium levels (especially with loop and thiazide diuretics) to prevent adverse effects like hypokalemia or hyperkalemia with potassium-sparing diuretics (Mayo Clinic, 2023e)."
+                }
+            }
+        };
+
+        const modal = document.getElementById('questionModal');
+        const modalQuestion = document.getElementById('modalQuestion');
+        const modalAnswer = document.getElementById('modalAnswer');
+        const modalRationale = document.getElementById('modalRationale');
+        const revealAnswerBtn = document.getElementById('revealAnswerBtn');
+        const closeModalBtn = document.getElementById('closeModalBtn');
+        const gridItems = document.querySelectorAll('.grid-item:not(.category-name)'); // Select only the point values
+
+        gridItems.forEach(item => {
+            item.addEventListener('click', function() {
+                if (this.classList.contains('used')) {
+                    return; // Do nothing if already used
+                }
+
+                const category = this.dataset.category;
+                const points = parseInt(this.dataset.points);
+                const qData = jeopardyQuestions[category][points];
+
+                modalQuestion.textContent = qData.question;
+                modalAnswer.innerHTML = `<strong>Answer:</strong> ${qData.answer}`;
+                modalRationale.textContent = `Rationale: ${qData.rationale}`;
+
+                // Reset modal state
+                modalAnswer.style.display = 'none';
+                modalRationale.style.display = 'none';
+                revealAnswerBtn.style.display = 'inline-block'; // Show reveal button
+                revealAnswerBtn.disabled = false;
+
+                modal.classList.add('active');
+
+                // Mark the clicked item as used
+                this.classList.add('used');
+            });
+        });
+
+        revealAnswerBtn.addEventListener('click', function() {
+            modalAnswer.style.display = 'block';
+            modalRationale.style.display = 'block';
+            this.disabled = true; // Disable reveal button after clicked
+        });
+
+        closeModalBtn.addEventListener('click', function() {
+            modal.classList.remove('active');
+        });
+
+        // Add actual references (or placeholders for display)
+        const references = {
+            "American Heart Association. (2023a). *Fluid Retention and Heart Failure*. Retrieved from https://www.heart.org/en/health-topics/heart-failure/warning-signs-of-heart-failure/fluid-retention-and-heart-failure": "American Heart Association, 2023a",
+            "American Heart Association. (2023b). *Heart Sounds*. Retrieved from https://www.heart.org/en/health-topics/heart-attack/diagnosing-a-heart-attack/heart-sounds": "American Heart Association, 2023b",
+            "American Heart Association. (2023c). *Sodium and Salt*. Retrieved from https://www.heart.org/en/healthy-living/healthy-eating/eat-smart/sodium-and-salt": "American Heart Association, 2023c",
+            "Centers for Disease Control and Prevention. (2023). *Heart Failure*. Retrieved from https://www.cdc.gov/heartdisease/heart_failure.htm": "Centers for Disease Control and Prevention, 2023",
+            "Cleveland Clinic. (2022). *Jugular Venous Distention*. Retrieved from https://my.clevelandclinic.org/health/diseases/23240-jugular-venous-distention-jvd": "Cleveland Clinic, 2022",
+            "Cleveland Clinic. (2023). *Fluid Overload (Hypervolemia)*. Retrieved from https://my.clevelandclinic.org/health/diseases/24641-fluid-overload-hypervolemia": "Cleveland Clinic, 2023",
+            "Cleveland Clinic. (n.d.). *IV Infusion Pump*. Retrieved from https://my.clevelandclinic.org/health/treatments/22513-iv-infusion-pump": "Cleveland Clinic, n.d.",
+            "Mayo Clinic. (2023a). *Osmolality test - blood*. Retrieved from https://www.mayoclinic.org/tests-procedures/osmolality-test-blood/about/pac-20384952": "Mayo Clinic, 2023a",
+            "Mayo Clinic. (2023b). *Edema*. Retrieved from https://www.mayoclinic.org/diseases-conditions/edema/symptoms-causes/syc-20366493": "Mayo Clinic, 2023b",
+            "Mayo Clinic. (2023c). *Cirrhosis*. Retrieved from https://www.mayoclinic.org/diseases-conditions/cirrhosis/symptoms-causes/syc-20351487": "Mayo Clinic, 2023c",
+            "Mayo Clinic. (2023d). *Fluid restriction: How to cope with thirst*. Retrieved from https://www.mayoclinic.org/diseases-conditions/heart-failure/in-depth/fluid-restriction/art-20044502": "Mayo Clinic, 2023d",
+            "Mayo Clinic. (2023e). *Diuretics*. Retrieved from https://www.mayoclinic.org/diseases-conditions/high-blood-pressure/in-depth/diuretics/art-20048164": "Mayo Clinic, 2023e",
+            "MedlinePlus. (2022). *Crackles*. Retrieved from https://medlineplus.gov/ency/article/003365.htm": "MedlinePlus, 2022",
+            "MedlinePlus. (2023). *Antidiuretic hormone (ADH) test*. Retrieved from https://medlineplus.gov/lab-tests/antidiuretic-hormone-adh-test/": "MedlinePlus, 2023",
+            "National Cancer Institute. (n.d.). *Hydrostatic pressure*. Retrieved from https://www.cancer.gov/publications/dictionaries/cancer-terms/def/hydrostatic-pressure": "National Cancer Institute, n.d.",
+            "National Kidney Foundation. (n.d.). *How Your Kidneys Work*. Retrieved from https://www.kidney.org/atoz/content/kidneyswork": "National Kidney Foundation, n.d.",
+            "National Institute of Diabetes and Digestive and Kidney Diseases. (2023). *Kidney Failure*. Retrieved from https://www.niddk.nih.gov/health-information/kidney-disease/kidney-failure": "National Institute of Diabetes and Digestive and Kidney Diseases, 2023",
+            "National Institute of Diabetes and Digestive and Kidney Diseases. (2024). *SIADH (Syndrome of Inappropriate Antidiuretic Hormone)*. Retrieved from https://www.niddk.nih.gov/health-information/endocrine-diseases/siadh-syndrome-inappropriate-antidiuretic-hormone": "National Institute of Diabetes and Digestive and Kidney Diseases, 2024",
+            "National Pressure Injury Advisory Panel. (n.d.). *Prevention and Treatment of Pressure Injuries: Clinical Practice Guideline*. Retrieved from https://npiap.com/page/PreventionandTreatment": "National Pressure Injury Advisory Panel, n.d.",
+            "RegisteredNurseRN.com. (n.d.). *Intake and Output (I&O) Nursing Skill*. Retrieved from https://www.registerednursern.com/intake-and-output-io-nursing-skill/": "RegisteredNurseRN.com, n.d.",
+            "StatPearls. (2024a). *Intravenous Fluid Management*. Retrieved from https://www.ncbi.nlm.nih.gov/books/NBK557618/": "StatPearls, 2024a",
+            "StatPearls. (2024b). *Fowler Position*. Retrieved from https://www.ncbi.nlm.nih.gov/books/NBK557805/": "StatPearls, 2024b"
+        };
+        // This 'references' object is for your information. The in-text citations in the rationales are simplified for display in the game.
+    </script>
+</body>
+</html>
