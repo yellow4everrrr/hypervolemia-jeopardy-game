@@ -31,23 +31,29 @@
       --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 4px 20px rgba(0,0,0,0.35);
     }
   }
-  *{box-sizing:border-box;}
+  *{box-sizing:border-box; min-width:0;}
+  html, body{overflow-x:hidden; max-width:100%;}
   body{
     margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
     background:var(--page); color:var(--text-primary); line-height:1.4;
   }
   .wrap{max-width:1200px; margin:0 auto; padding:20px 20px 80px;}
+  @media (max-width:600px){ .wrap{padding:14px 12px 60px;} }
   header.app{
     display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;
     padding:18px 0 20px;
   }
   header.app h1{font-size:22px; margin:0; display:flex; align-items:center; gap:10px;}
   header.app .sub{color:var(--text-secondary); font-size:13px; margin-top:2px;}
+  @media (max-width:600px){
+    header.app h1{font-size:19px;}
+    header.app .sub{font-size:12px;}
+  }
   .year-select{display:flex; align-items:center; gap:8px;}
   select, input, textarea, button{
     font-family:inherit; font-size:14px; color:var(--text-primary);
     background:var(--surface-2); border:1px solid var(--border); border-radius:8px;
-    padding:8px 10px;
+    padding:8px 10px; max-width:100%;
   }
   select:focus, input:focus, textarea:focus{outline:2px solid var(--accent); outline-offset:1px;}
   button{cursor:pointer; font-weight:600;}
@@ -63,7 +69,8 @@
     background:var(--surface-1); border:1px solid var(--border); border-radius:14px;
     box-shadow:var(--shadow); padding:18px 20px; margin-bottom:20px;
   }
-  .card h2{font-size:15px; margin:0 0 14px; display:flex; align-items:center; justify-content:space-between; gap:10px;}
+  @media (max-width:600px){ .card{padding:14px; border-radius:12px;} }
+  .card h2{font-size:15px; margin:0 0 14px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:6px 10px;}
   .card h2 .hint{font-size:12px; color:var(--text-muted); font-weight:400;}
 
   .tiles{display:grid; grid-template-columns:repeat(auto-fit, minmax(140px,1fr)); gap:12px; margin-bottom:20px;}
@@ -82,9 +89,11 @@
   svg text{font-family:inherit;}
 
   .form-grid{display:grid; grid-template-columns:repeat(6,1fr); gap:10px; align-items:end;}
-  @media (max-width:900px){ .form-grid{grid-template-columns:repeat(2,1fr);} }
-  .form-grid label{display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--text-secondary);}
-  .form-grid .actions{grid-column:1/-1; display:flex; gap:10px; margin-top:4px;}
+  @media (max-width:900px){ .form-grid{grid-template-columns:repeat(3,1fr);} }
+  @media (max-width:560px){ .form-grid{grid-template-columns:repeat(2,1fr); gap:8px;} }
+  .form-grid label{display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--text-secondary); min-width:0;}
+  .form-grid select, .form-grid input{width:100%;}
+  .form-grid .actions{grid-column:1/-1; display:flex; gap:10px; margin-top:4px; flex-wrap:wrap;}
 
   table{width:100%; border-collapse:collapse; font-size:13px;}
   th, td{padding:8px 10px; text-align:right; border-bottom:1px solid var(--gridline); white-space:nowrap; font-variant-numeric:tabular-nums;}
@@ -92,17 +101,34 @@
   th:nth-child(2), td:nth-child(2){text-align:left; font-variant-numeric:normal;}
   th{color:var(--text-muted); font-weight:600; font-size:11.5px; text-transform:uppercase; letter-spacing:.03em; border-bottom:1px solid var(--baseline);}
   tbody tr:hover{background:var(--gridline);}
-  .table-wrap{overflow-x:auto;}
+  @media (max-width:600px){
+    th, td{padding:7px 8px; font-size:12.5px;}
+  }
+  .table-wrap{
+    overflow-x:auto; -webkit-overflow-scrolling:touch;
+    border-radius:8px;
+    background:
+      linear-gradient(to right, var(--surface-1) 0%, rgba(255,255,255,0)) left,
+      linear-gradient(to left, var(--surface-1) 0%, rgba(255,255,255,0)) right,
+      linear-gradient(to right, var(--border) 0%, rgba(255,255,255,0) 4px) left,
+      linear-gradient(to left, var(--border) 0%, rgba(255,255,255,0) 4px) right;
+    background-repeat:no-repeat;
+    background-size:20px 100%, 20px 100%, 20px 100%, 20px 100%;
+    background-attachment:local, local, scroll, scroll;
+  }
+  .scroll-hint{display:none; font-size:11px; color:var(--text-muted); margin-bottom:6px;}
+  @media (max-width:700px){ .scroll-hint{display:block;} }
   .month-total td{font-weight:700; background:rgba(137,135,129,0.08); border-top:1px solid var(--baseline);}
   .num-pos{color:var(--good);}
   .num-neg{color:var(--critical);}
 
   details.month-block{border-bottom:1px solid var(--gridline); padding:6px 0;}
-  details.month-block > summary{cursor:pointer; font-weight:700; padding:6px 4px; list-style:none; display:flex; justify-content:space-between; gap:10px;}
+  details.month-block > summary{cursor:pointer; font-weight:700; padding:6px 4px; list-style:none; display:flex; flex-wrap:wrap; justify-content:space-between; gap:4px 10px;}
   details.month-block > summary::-webkit-details-marker{display:none;}
   details.month-block > summary::before{content:"▸ "; color:var(--text-muted);}
   details.month-block[open] > summary::before{content:"▾ ";}
-  .month-badges{display:flex; gap:14px; font-weight:400; font-size:12px; color:var(--text-secondary);}
+  .month-badges{display:flex; flex-wrap:wrap; gap:6px 14px; font-weight:400; font-size:12px; color:var(--text-secondary);}
+  @media (max-width:600px){ .month-badges{font-size:11px; gap:4px 10px; width:100%;} }
 
   .badge{display:inline-block; padding:2px 8px; border-radius:999px; font-size:11.5px; font-weight:700;}
   .badge.pending{background:rgba(137,135,129,0.18); color:var(--text-secondary);}
@@ -112,6 +138,7 @@
   @media (prefers-color-scheme:dark){ .badge.passed{color:var(--warning);} }
 
   .pricing-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:16px;}
+  @media (max-width:340px){ .pricing-grid{grid-template-columns:1fr;} }
   .firm-card{border:1px solid var(--border); border-radius:12px; padding:12px 14px;}
   .firm-card h3{margin:0 0 8px; font-size:14px; display:flex; align-items:center; gap:8px;}
   .swatch{width:10px; height:10px; border-radius:3px; display:inline-block;}
@@ -204,6 +231,7 @@
 
   <div class="card">
     <h2>Entries <span class="hint" id="entryCountHint"></span></h2>
+    <div class="scroll-hint">← Swipe the table to see more columns →</div>
     <div class="table-wrap">
       <table>
         <thead><tr>
@@ -216,11 +244,13 @@
 
   <div class="card">
     <h2>Monthly Summary <span class="hint">Blue = you log it above · everything here is auto-calculated</span></h2>
+    <div class="scroll-hint">← Swipe each month's table to see more columns →</div>
     <div id="monthlySummary"></div>
   </div>
 
   <div class="card">
     <h2>Firm Breakdown <span class="hint" id="firmBreakdownHint"></span></h2>
+    <div class="scroll-hint">← Swipe the table to see more columns →</div>
     <div class="table-wrap">
       <table>
         <thead><tr>
