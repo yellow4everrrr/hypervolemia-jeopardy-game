@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Prop Firm Tracker</title>
+<title>Prop Expenses</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%8A%3C/text%3E%3C/svg%3E">
 <style>
   :root{
@@ -177,7 +177,7 @@
 
   <header class="app">
     <div>
-      <h1>📊 Prop Firm Tracker</h1>
+      <h1>📊 Prop Expenses</h1>
       <div class="sub">Track evaluation spend, payouts, and ROI across Topstep, MyFundedFutures, Lucid Trading, Take Profit Trader &amp; Alpha Futures.</div>
     </div>
     <div class="year-select">
@@ -329,7 +329,7 @@
     <div class="note">All data is stored locally in this browser (localStorage) — nothing is sent anywhere. Export a backup regularly.</div>
   </div>
 
-  <footer class="app">Prop Firm Tracker — self-contained, works offline, your data never leaves your browser.</footer>
+  <footer class="app">Prop Expenses — self-contained, works offline, your data never leaves your browser.</footer>
 </div>
 
 <div class="tooltip" id="tooltip"></div>
@@ -976,7 +976,7 @@
     const blob = new Blob([JSON.stringify(state,null,2)], {type:"application/json"});
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = "propfirm-tracker-backup.json";
+    a.href = url; a.download = "prop-expenses-backup.json";
     a.click();
     URL.revokeObjectURL(url);
   });
@@ -997,7 +997,7 @@
     const blob = new Blob([lines.join("\n")], {type:"text/csv"});
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = "propfirm-tracker-entries.csv";
+    a.href = url; a.download = "prop-expenses-entries.csv";
     a.click();
     URL.revokeObjectURL(url);
   });
