@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Prop Firm Tracker</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%8A%3C/text%3E%3C/svg%3E">
+<style>
+  :root{
+    --surface-1:#fcfcfb; --surface-2:#ffffff; --page:#f9f9f7;
+    --text-primary:#0b0b0b; --text-secondary:#52514e; --text-muted:#898781;
+    --gridline:#e1e0d9; --baseline:#c3c2b7; --border:rgba(11,11,11,0.10);
+    --series-1:#2a78d6; /* Topstep */
+    --series-2:#1baf7a; /* MyFundedFutures */
+    --series-3:#eda100; /* Lucid */
+    --series-4:#008300; /* Take Profit Trader */
+    --series-5:#4a3aa7; /* Alpha Futures */
+    --good:#0ca30c; --warning:#fab219; --serious:#ec835a; --critical:#d03b3b;
+    --accent:#2a78d6;
+    --shadow: 0 1px 2px rgba(11,11,11,0.06), 0 4px 16px rgba(11,11,11,0.05);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --surface-1:#1a1a19; --surface-2:#212120; --page:#0d0d0d;
+      --text-primary:#ffffff; --text-secondary:#c3c2b7; --text-muted:#898781;
+      --gridline:#2c2c2a; --baseline:#383835; --border:rgba(255,255,255,0.10);
+      --series-1:#3987e5; --series-2:#199e70; --series-3:#c98500;
+      --series-4:#008300; --series-5:#9085e9;
+      --good:#0ca30c; --warning:#fab219; --serious:#ec835a; --critical:#d03b3b;
+      --accent:#3987e5;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 4px 20px rgba(0,0,0,0.35);
+    }
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
+    background:var(--page); color:var(--text-primary); line-height:1.4;
+  }
+  .wrap{max-width:1200px; margin:0 auto; padding:20px 20px 80px;}
+  header.app{
+    display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;
+    padding:18px 0 20px;
+  }
+  header.app h1{font-size:22px; margin:0; display:flex; align-items:center; gap:10px;}
+  header.app .sub{color:var(--text-secondary); font-size:13px; margin-top:2px;}
+  .year-select{display:flex; align-items:center; gap:8px;}
+  select, input, textarea, button{
+    font-family:inherit; font-size:14px; color:var(--text-primary);
+    background:var(--surface-2); border:1px solid var(--border); border-radius:8px;
+    padding:8px 10px;
+  }
+  select:focus, input:focus, textarea:focus{outline:2px solid var(--accent); outline-offset:1px;}
+  button{cursor:pointer; font-weight:600;}
+  button.primary{background:var(--accent); color:#fff; border:none;}
+  button.primary:hover{filter:brightness(1.08);}
+  button.ghost{background:transparent;}
+  button.ghost:hover{background:var(--gridline);}
+  button.danger{background:transparent; color:var(--critical); border-color:var(--critical);}
+  button.danger:hover{background:var(--critical); color:#fff;}
+  button.small{padding:4px 8px; font-size:12px; border-radius:6px;}
+
+  .card{
+    background:var(--surface-1); border:1px solid var(--border); border-radius:14px;
+    box-shadow:var(--shadow); padding:18px 20px; margin-bottom:20px;
+  }
+  .card h2{font-size:15px; margin:0 0 14px; display:flex; align-items:center; justify-content:space-between; gap:10px;}
+  .card h2 .hint{font-size:12px; color:var(--text-muted); font-weight:400;}
+
+  .tiles{display:grid; grid-template-columns:repeat(auto-fit, minmax(140px,1fr)); gap:12px; margin-bottom:20px;}
+  .tile{
+    background:var(--surface-1); border:1px solid var(--border); border-radius:12px;
+    padding:14px 16px; box-shadow:var(--shadow);
+  }
+  .tile .label{font-size:11.5px; color:var(--text-muted); text-transform:uppercase; letter-spacing:.04em;}
+  .tile .value{font-size:22px; font-weight:700; margin-top:4px; font-variant-numeric:tabular-nums;}
+  .tile .value.good{color:var(--good);}
+  .tile .value.bad{color:var(--critical);}
+
+  .charts-row{display:grid; grid-template-columns:1.2fr 1fr; gap:20px;}
+  @media (max-width:820px){ .charts-row{grid-template-columns:1fr;} }
+  .chart-scroll{overflow-x:auto;}
+  svg text{font-family:inherit;}
+
+  .form-grid{display:grid; grid-template-columns:repeat(6,1fr); gap:10px; align-items:end;}
+  @media (max-width:900px){ .form-grid{grid-template-columns:repeat(2,1fr);} }
+  .form-grid label{display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--text-secondary);}
+  .form-grid .actions{grid-column:1/-1; display:flex; gap:10px; margin-top:4px;}
+
+  table{width:100%; border-collapse:collapse; font-size:13px;}
+  th, td{padding:8px 10px; text-align:right; border-bottom:1px solid var(--gridline); white-space:nowrap; font-variant-numeric:tabular-nums;}
+  th:first-child, td:first-child{text-align:left; font-variant-numeric:normal;}
+  th:nth-child(2), td:nth-child(2){text-align:left; font-variant-numeric:normal;}
+  th{color:var(--text-muted); font-weight:600; font-size:11.5px; text-transform:uppercase; letter-spacing:.03em; border-bottom:1px solid var(--baseline);}
+  tbody tr:hover{background:var(--gridline);}
+  .table-wrap{overflow-x:auto;}
+  .month-total td{font-weight:700; background:rgba(137,135,129,0.08); border-top:1px solid var(--baseline);}
+  .num-pos{color:var(--good);}
+  .num-neg{color:var(--critical);}
+
+  details.month-block{border-bottom:1px solid var(--gridline); padding:6px 0;}
+  details.month-block > summary{cursor:pointer; font-weight:700; padding:6px 4px; list-style:none; display:flex; justify-content:space-between; gap:10px;}
+  details.month-block > summary::-webkit-details-marker{display:none;}
+  details.month-block > summary::before{content:"▸ "; color:var(--text-muted);}
+  details.month-block[open] > summary::before{content:"▾ ";}
+  .month-badges{display:flex; gap:14px; font-weight:400; font-size:12px; color:var(--text-secondary);}
+
+  .badge{display:inline-block; padding:2px 8px; border-radius:999px; font-size:11.5px; font-weight:700;}
+  .badge.pending{background:rgba(137,135,129,0.18); color:var(--text-secondary);}
+  .badge.failed{background:rgba(208,59,59,0.14); color:var(--critical);}
+  .badge.passed{background:rgba(250,178,25,0.18); color:#9a6a00;}
+  .badge.funded{background:rgba(12,163,12,0.14); color:var(--good);}
+  @media (prefers-color-scheme:dark){ .badge.passed{color:var(--warning);} }
+
+  .pricing-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:16px;}
+  .firm-card{border:1px solid var(--border); border-radius:12px; padding:12px 14px;}
+  .firm-card h3{margin:0 0 8px; font-size:14px; display:flex; align-items:center; gap:8px;}
+  .swatch{width:10px; height:10px; border-radius:3px; display:inline-block;}
+  .plan-row{display:flex; align-items:center; justify-content:space-between; gap:8px; padding:5px 0; border-bottom:1px dashed var(--gridline); font-size:12.5px;}
+  .plan-row:last-child{border-bottom:none;}
+  .plan-row .plabel{color:var(--text-secondary);}
+  .plan-row .pfee{color:var(--text-muted); font-size:11px; display:block;}
+  .plan-row input{width:90px; text-align:right; padding:3px 6px;}
+
+  .toolbar{display:flex; flex-wrap:wrap; gap:10px; align-items:center;}
+  .note{font-size:12px; color:var(--text-muted); margin-top:10px;}
+  .empty{color:var(--text-muted); font-style:italic; padding:16px 0;}
+
+  .tooltip{
+    position:fixed; pointer-events:none; background:var(--text-primary); color:var(--page);
+    padding:6px 10px; border-radius:8px; font-size:12px; line-height:1.4; box-shadow:var(--shadow);
+    opacity:0; transform:translateY(4px); transition:opacity .1s ease; z-index:50; max-width:220px;
+  }
+  .tooltip.show{opacity:1;}
+  .tooltip b{display:block;}
+
+  .legend{display:flex; flex-wrap:wrap; gap:12px; font-size:12px; color:var(--text-secondary); margin-top:8px;}
+  .legend .item{display:flex; align-items:center; gap:6px;}
+
+  footer.app{text-align:center; color:var(--text-muted); font-size:12px; padding:30px 0 10px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="app">
+    <div>
+      <h1>📊 Prop Firm Tracker</h1>
+      <div class="sub">Track evaluation spend, payouts, and ROI across Topstep, MyFundedFutures, Lucid Trading, Take Profit Trader &amp; Alpha Futures.</div>
+    </div>
+    <div class="year-select">
+      <label style="font-size:12px;color:var(--text-secondary);">Year
+        <select id="yearFilter"></select>
+      </label>
+    </div>
+  </header>
+
+  <div class="tiles" id="statTiles"></div>
+
+  <div class="charts-row">
+    <div class="card">
+      <h2>Monthly Net P&amp;L <span class="hint">selected year</span></h2>
+      <div class="chart-scroll"><svg id="chartMonthlyPL" width="100%" height="260"></svg></div>
+    </div>
+    <div class="card">
+      <h2>Spend by Firm <span class="hint">selected year</span></h2>
+      <div class="chart-scroll"><svg id="chartFirmSpend" width="100%" height="260"></svg></div>
+      <div class="legend" id="firmLegend"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Log an Evaluation Purchase</h2>
+    <form class="form-grid" id="entryForm">
+      <label>Date
+        <input type="date" id="f_date" required>
+      </label>
+      <label>Firm
+        <select id="f_firm" required></select>
+      </label>
+      <label>Plan
+        <select id="f_plan" required></select>
+      </label>
+      <label>Cost ($)
+        <input type="number" id="f_cost" step="0.01" min="0" required>
+      </label>
+      <label>Status
+        <select id="f_status">
+          <option value="pending">In Progress</option>
+          <option value="failed">Failed</option>
+          <option value="passed">Passed (not funded)</option>
+          <option value="funded">Funded</option>
+        </select>
+      </label>
+      <label>Payout received ($)
+        <input type="number" id="f_payout" step="0.01" min="0" value="0">
+      </label>
+      <div class="actions">
+        <button type="submit" class="primary" id="f_submit">Add entry</button>
+        <button type="button" class="ghost" id="f_cancel" style="display:none;">Cancel edit</button>
+      </div>
+      <input type="hidden" id="f_id">
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Entries <span class="hint" id="entryCountHint"></span></h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Date</th><th>Firm / Plan</th><th>Cost</th><th>Status</th><th>Payout</th><th>Net P&amp;L</th><th>ROI %</th><th></th>
+        </tr></thead>
+        <tbody id="entriesBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Monthly Summary <span class="hint">Blue = you log it above · everything here is auto-calculated</span></h2>
+    <div id="monthlySummary"></div>
+  </div>
+
+  <div class="card">
+    <h2>Firm Breakdown <span class="hint" id="firmBreakdownHint"></span></h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Firm</th><th>Qty Bought</th><th>Total Spent</th><th>Net Payout</th><th>Net P&amp;L</th><th>ROI %</th><th>Qty Passed</th><th>Qty Funded</th><th>Pass Rate %</th>
+        </tr></thead>
+        <tbody id="firmBreakdownBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Plans &amp; Pricing Reference <span class="hint">edit any price to match what you actually paid — used to autofill the form above</span></h2>
+    <div class="pricing-grid" id="pricingGrid"></div>
+    <div class="note">Prices reflect standard/list rates as of mid-2026 and change often with promo codes and flash sales — always confirm at checkout. Edit fields here to keep your autofill accurate, or just overwrite the Cost field per entry.</div>
+    <div class="toolbar" style="margin-top:12px;">
+      <button class="ghost small" id="resetPricesBtn">Reset prices to defaults</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Data</h2>
+    <div class="toolbar">
+      <button class="ghost" id="exportJsonBtn">Export JSON backup</button>
+      <button class="ghost" id="exportCsvBtn">Export entries as CSV</button>
+      <label class="ghost" style="display:inline-flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;border:1px solid var(--border);cursor:pointer;">
+        Import JSON
+        <input type="file" id="importInput" accept="application/json" style="display:none;">
+      </label>
+      <button class="danger" id="clearDataBtn">Clear all data</button>
+    </div>
+    <div class="note">All data is stored locally in this browser (localStorage) — nothing is sent anywhere. Export a backup regularly.</div>
+  </div>
+
+  <footer class="app">Prop Firm Tracker — self-contained, works offline, your data never leaves your browser.</footer>
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ---------- Default firm & plan pricing data ---------- */
+  const DEFAULT_FIRMS = {
+    topstep: { name:"Topstep", colorVar:"--series-1", plans:[
+      {id:"ts-std-50k",   label:"50K · Standard Path",           size:50000,  price:49,  fee:"$149 activation fee when you pass"},
+      {id:"ts-std-100k",  label:"100K · Standard Path",          size:100000, price:99,  fee:"$149 activation fee when you pass"},
+      {id:"ts-std-150k",  label:"150K · Standard Path",          size:150000, price:149, fee:"$149 activation fee when you pass"},
+      {id:"ts-noact-50k", label:"50K · No-Activation-Fee Path",  size:50000,  price:95,  fee:"No activation fee, higher monthly"},
+      {id:"ts-noact-100k",label:"100K · No-Activation-Fee Path", size:100000, price:149, fee:"No activation fee, higher monthly"},
+      {id:"ts-noact-150k",label:"150K · No-Activation-Fee Path", size:150000, price:229, fee:"No activation fee, higher monthly"},
+    ]},
+    mff: { name:"MyFundedFutures", colorVar:"--series-2", plans:[
+      {id:"mff-core-50k",  label:"Core 50K",  size:50000,  price:77,  fee:"$0 activation fee"},
+      {id:"mff-rapid-50k", label:"Rapid 50K", size:50000,  price:117, fee:"$0 activation fee · daily payouts"},
+      {id:"mff-rapid-100k",label:"Rapid 100K",size:100000, price:214, fee:"$0 activation fee · daily payouts"},
+      {id:"mff-rapid-150k",label:"Rapid 150K",size:150000, price:278, fee:"$0 activation fee · daily payouts"},
+      {id:"mff-pro-50k",   label:"Pro 50K",   size:50000,  price:227, fee:"$0 activation fee"},
+      {id:"mff-pro-100k",  label:"Pro 100K",  size:100000, price:344, fee:"$0 activation fee"},
+      {id:"mff-pro-150k",  label:"Pro 150K",  size:150000, price:477, fee:"$0 activation fee"},
+      {id:"mff-flex-25k",  label:"Flex 25K",  size:25000,  price:87,  fee:"$0 activation fee"},
+      {id:"mff-flex-50k",  label:"Flex 50K",  size:50000,  price:107, fee:"$0 activation fee"},
+    ]},
+    lucid: { name:"Lucid Trading", colorVar:"--series-3", plans:[
+      {id:"lucid-flex-25k",  label:"LucidFlex 25K",  size:25000,  price:100,    fee:"One-time fee, no monthly, 90/10 split"},
+      {id:"lucid-flex-50k",  label:"LucidFlex 50K",  size:50000,  price:140,    fee:"One-time fee, no monthly, 90/10 split"},
+      {id:"lucid-flex-100k", label:"LucidFlex 100K", size:100000, price:225,    fee:"One-time fee, no monthly, 90/10 split"},
+      {id:"lucid-flex-150k", label:"LucidFlex 150K", size:150000, price:420,    fee:"One-time fee, no monthly, 90/10 split"},
+      {id:"lucid-pro-50k",   label:"LucidPro 50K",   size:50000,  price:129.50, fee:"One-time fee, no monthly"},
+      {id:"lucid-pro-100k",  label:"LucidPro 100K",  size:100000, price:199.50, fee:"One-time fee, no monthly"},
+      {id:"lucid-pro-150k",  label:"LucidPro 150K",  size:150000, price:259,    fee:"One-time fee, no monthly"},
+      {id:"lucid-direct-25k",label:"LucidDirect 25K",size:25000,  price:280,    fee:"One-time fee, no monthly"},
+    ]},
+    tpt: { name:"Take Profit Trader", colorVar:"--series-4", plans:[
+      {id:"tpt-test-25k", label:"Test 25K",  size:25000,  price:150, fee:"$130 PRO activation fee when you pass"},
+      {id:"tpt-test-50k", label:"Test 50K",  size:50000,  price:170, fee:"$130 PRO activation fee when you pass"},
+      {id:"tpt-test-75k", label:"Test 75K",  size:75000,  price:245, fee:"$130 PRO activation fee when you pass"},
+      {id:"tpt-test-100k",label:"Test 100K", size:100000, price:330, fee:"$130 PRO activation fee when you pass"},
+      {id:"tpt-test-150k",label:"Test 150K", size:150000, price:360, fee:"$130 PRO activation fee when you pass"},
+    ]},
+    alpha: { name:"Alpha Futures", colorVar:"--series-5", plans:[
+      {id:"alpha-zero-25k",  label:"Zero 25K",     size:25000,  price:79,  fee:"No activation fee, ever"},
+      {id:"alpha-zero-50k",  label:"Zero 50K",     size:50000,  price:119, fee:"No activation fee, ever"},
+      {id:"alpha-zero-100k", label:"Zero 100K",    size:100000, price:159, fee:"No activation fee, ever"},
+      {id:"alpha-adv-50k",   label:"Advanced 50K", size:50000,  price:129, fee:"$149 activation fee"},
+      {id:"alpha-adv-100k",  label:"Advanced 100K",size:100000, price:249, fee:"$149 activation fee"},
+      {id:"alpha-adv-150k",  label:"Advanced 150K",size:150000, price:419, fee:"$149 activation fee"},
+      {id:"alpha-prem-50k",  label:"Premium 50K",  size:50000,  price:99,  fee:"$149 activation, or $0 activation at higher monthly"},
+      {id:"alpha-prem-100k", label:"Premium 100K", size:100000, price:189, fee:"$149 activation, or $0 activation at higher monthly"},
+      {id:"alpha-prem-150k", label:"Premium 150K", size:150000, price:299, fee:"$149 activation, or $0 activation at higher monthly"},
+    ]},
+  };
+  const FIRM_ORDER = ["topstep","mff","lucid","tpt","alpha"];
+  const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  const STORAGE_KEY = "propfirmTracker.v1";
+
+  /* ---------- State ---------- */
+  let state = loadState();
+
+  function defaultState(){
+    return { entries: [], priceOverrides: {} };
+  }
+  function loadState(){
+    try{
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if(!raw) return defaultState();
+      const parsed = JSON.parse(raw);
+      if(!parsed || !Array.isArray(parsed.entries)) return defaultState();
+      return { entries: parsed.entries, priceOverrides: parsed.priceOverrides || {} };
+    }catch(e){ return defaultState(); }
+  }
+  function saveState(){
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  }
+
+  function getPlan(firmKey, planId){
+    const firm = DEFAULT_FIRMS[firmKey];
+    if(!firm) return null;
+    return firm.plans.find(p=>p.id===planId) || null;
+  }
+  function getPlanPrice(firmKey, planId){
+    const key = firmKey+"::"+planId;
+    if(Object.prototype.hasOwnProperty.call(state.priceOverrides, key)) return state.priceOverrides[key];
+    const plan = getPlan(firmKey, planId);
+    return plan ? plan.price : 0;
+  }
+  function setPlanPrice(firmKey, planId, value){
+    const key = firmKey+"::"+planId;
+    state.priceOverrides[key] = value;
+    saveState();
+  }
+
+  const fmtUSD = n => (n<0?"-$":"$") + Math.abs(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+  const fmtPct = n => (n===null || !isFinite(n)) ? "–" : (n*100).toFixed(1)+"%";
+  const uid = () => "e" + Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+
+  /* ---------- Derived calculations ---------- */
+  function computeEntryMetrics(e){
+    const netPL = e.payout - e.cost;
+    const roi = e.cost>0 ? netPL/e.cost : null;
+    return {netPL, roi};
+  }
+
+  function aggregate(entries){
+    const qtyBought = entries.length;
+    const totalSpent = entries.reduce((s,e)=>s+e.cost,0);
+    const totalPayout = entries.reduce((s,e)=>s+e.payout,0);
+    const netPL = totalPayout - totalSpent;
+    const roi = totalSpent>0 ? netPL/totalSpent : null;
+    const qtyPassed = entries.filter(e=>e.status==="passed"||e.status==="funded").length;
+    const qtyFunded = entries.filter(e=>e.status==="funded").length;
+    const passRate = qtyBought>0 ? qtyPassed/qtyBought : null;
+    return {qtyBought, totalSpent, totalPayout, netPL, roi, qtyPassed, qtyFunded, passRate};
+  }
+
+  function entryYear(e){ return e.date ? e.date.slice(0,4) : ""; }
+  function entryMonthIdx(e){ return e.date ? parseInt(e.date.slice(5,7),10)-1 : 0; }
+
+  function getSelectedYear(){
+    const sel = document.getElementById("yearFilter");
+    return sel.value;
+  }
+  function filteredEntries(){
+    const y = getSelectedYear();
+    if(y==="all") return state.entries.slice();
+    return state.entries.filter(e=>entryYear(e)===y);
+  }
+
+  /* ---------- Populate firm/plan selects ---------- */
+  function populateFirmSelect(){
+    const sel = document.getElementById("f_firm");
+    sel.innerHTML = FIRM_ORDER.map(k=>`<option value="${k}">${DEFAULT_FIRMS[k].name}</option>`).join("");
+  }
+  function populatePlanSelect(){
+    const firmKey = document.getElementById("f_firm").value;
+    const sel = document.getElementById("f_plan");
+    const firm = DEFAULT_FIRMS[firmKey];
+    sel.innerHTML = firm.plans.map(p=>`<option value="${p.id}">${p.label} — ${fmtUSD(getPlanPrice(firmKey,p.id))}</option>`).join("");
+    document.getElementById("f_cost").value = getPlanPrice(firmKey, sel.value);
+  }
+
+  /* ---------- Year filter ---------- */
+  function populateYearFilter(){
+    const sel = document.getElementById("yearFilter");
+    const current = sel.value;
+    const years = new Set(state.entries.map(entryYear).filter(Boolean));
+    const thisYear = String(new Date().getFullYear());
+    years.add(thisYear);
+    const sorted = Array.from(years).sort((a,b)=>b.localeCompare(a));
+    sel.innerHTML = sorted.map(y=>`<option value="${y}">${y}</option>`).join("") + `<option value="all">All time</option>`;
+    if(current && (sorted.includes(current) || current==="all")) sel.value = current;
+    else sel.value = thisYear;
+  }
+
+  /* ---------- Rendering: stat tiles ---------- */
+  function renderStatTiles(){
+    const agg = aggregate(filteredEntries());
+    const tiles = [
+      {label:"Evals Bought", value: agg.qtyBought.toString()},
+      {label:"Total Spent", value: fmtUSD(agg.totalSpent)},
+      {label:"Net Payouts", value: fmtUSD(agg.totalPayout)},
+      {label:"Net P&L", value: fmtUSD(agg.netPL), cls: agg.qtyBought===0?"":(agg.netPL>=0?"good":"bad")},
+      {label:"ROI %", value: fmtPct(agg.roi), cls: (agg.roi===null)?"":(agg.roi>=0?"good":"bad")},
+      {label:"Qty Passed", value: agg.qtyPassed.toString()},
+      {label:"Qty Funded", value: agg.qtyFunded.toString()},
+      {label:"Pass Rate %", value: fmtPct(agg.passRate)},
+    ];
+    document.getElementById("statTiles").innerHTML = tiles.map(t=>`
+      <div class="tile">
+        <div class="label">${t.label}</div>
+        <div class="value ${t.cls||""}">${t.value}</div>
+      </div>
+    `).join("");
+  }
+
+  /* ---------- Rendering: entries table ---------- */
+  function statusBadge(status){
+    const labels = {pending:"In Progress", failed:"Failed", passed:"Passed", funded:"Funded"};
+    return `<span class="badge ${status}">${labels[status]||status}</span>`;
+  }
+
+  function renderEntriesTable(){
+    const entries = filteredEntries().slice().sort((a,b)=> (b.date||"").localeCompare(a.date||""));
+    const body = document.getElementById("entriesBody");
+    document.getElementById("entryCountHint").textContent = entries.length ? `${entries.length} entr${entries.length===1?"y":"ies"}` : "";
+    if(entries.length===0){
+      body.innerHTML = `<tr><td colspan="8" class="empty">No entries yet for this period. Log your first evaluation purchase above.</td></tr>`;
+      return;
+    }
+    body.innerHTML = entries.map(e=>{
+      const {netPL, roi} = computeEntryMetrics(e);
+      const firm = DEFAULT_FIRMS[e.firm];
+      const plan = getPlan(e.firm, e.planId);
+      return `<tr>
+        <td>${e.date}</td>
+        <td>${firm?firm.name:e.firm} — ${plan?plan.label:e.planId}</td>
+        <td>${fmtUSD(e.cost)}</td>
+        <td style="text-align:left">${statusBadge(e.status)}</td>
+        <td>${fmtUSD(e.payout)}</td>
+        <td class="${netPL>=0?'num-pos':'num-neg'}">${fmtUSD(netPL)}</td>
+        <td class="${(roi!==null&&roi>=0)?'num-pos':'num-neg'}">${fmtPct(roi)}</td>
+        <td>
+          <button class="ghost small" data-edit="${e.id}">Edit</button>
+          <button class="danger small" data-del="${e.id}">Delete</button>
+        </td>
+      </tr>`;
+    }).join("");
+  }
+
+  /* ---------- Rendering: monthly summary ---------- */
+  function renderMonthlySummary(){
+    const year = getSelectedYear();
+    const container = document.getElementById("monthlySummary");
+    if(year==="all"){
+      container.innerHTML = `<div class="note">Select a specific year above to see the month-by-month breakdown.</div>`;
+      return;
+    }
+    const entries = filteredEntries();
+    let html = "";
+    let anyDataYear = entries.length>0;
+    for(let m=0;m<12;m++){
+      const monthEntries = entries.filter(e=>entryMonthIdx(e)===m);
+      const hasData = monthEntries.length>0;
+      let rows = "";
+      FIRM_ORDER.forEach(fk=>{
+        const fEntries = monthEntries.filter(e=>e.firm===fk);
+        const agg = aggregate(fEntries);
+        rows += `<tr>
+          <td>${DEFAULT_FIRMS[fk].name}</td>
+          <td>${agg.qtyBought}</td>
+          <td>${agg.totalSpent?fmtUSD(agg.totalSpent):"–"}</td>
+          <td>${agg.totalPayout?fmtUSD(agg.totalPayout):"–"}</td>
+          <td class="${agg.netPL>0?'num-pos':agg.netPL<0?'num-neg':''}">${agg.qtyBought?fmtUSD(agg.netPL):"–"}</td>
+          <td>${fmtPct(agg.roi)}</td>
+          <td>${agg.qtyPassed}</td>
+          <td>${agg.qtyFunded}</td>
+          <td>${fmtPct(agg.passRate)}</td>
+        </tr>`;
+      });
+      const monthAgg = aggregate(monthEntries);
+      rows += `<tr class="month-total">
+        <td>${MONTHS[m]} Total</td>
+        <td>${monthAgg.qtyBought}</td>
+        <td>${monthAgg.totalSpent?fmtUSD(monthAgg.totalSpent):"–"}</td>
+        <td>${monthAgg.totalPayout?fmtUSD(monthAgg.totalPayout):"–"}</td>
+        <td class="${monthAgg.netPL>0?'num-pos':monthAgg.netPL<0?'num-neg':''}">${monthAgg.qtyBought?fmtUSD(monthAgg.netPL):"–"}</td>
+        <td>${fmtPct(monthAgg.roi)}</td>
+        <td>${monthAgg.qtyPassed}</td>
+        <td>${monthAgg.qtyFunded}</td>
+        <td>${fmtPct(monthAgg.passRate)}</td>
+      </tr>`;
+      html += `<details class="month-block" ${hasData?"open":""}>
+        <summary>${MONTHS[m]}
+          <span class="month-badges">
+            <span>Spent: ${monthAgg.totalSpent?fmtUSD(monthAgg.totalSpent):"–"}</span>
+            <span>Payout: ${monthAgg.totalPayout?fmtUSD(monthAgg.totalPayout):"–"}</span>
+            <span class="${monthAgg.netPL>0?'num-pos':monthAgg.netPL<0?'num-neg':''}">Net: ${monthAgg.qtyBought?fmtUSD(monthAgg.netPL):"–"}</span>
+          </span>
+        </summary>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Firm</th><th>Qty Bought</th><th>Total Spent</th><th>Net Payout</th><th>Net P&amp;L</th><th>ROI %</th><th>Qty Passed</th><th>Qty Funded</th><th>Pass Rate %</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </details>`;
+    }
+    if(!anyDataYear){
+      html = `<div class="empty">No entries logged for ${year} yet.</div>` + html;
+    }
+    container.innerHTML = html;
+  }
+
+  /* ---------- Rendering: firm breakdown ---------- */
+  function renderFirmBreakdown(){
+    const entries = filteredEntries();
+    const year = getSelectedYear();
+    document.getElementById("firmBreakdownHint").textContent = year==="all" ? "all time" : year;
+    let rows = "";
+    FIRM_ORDER.forEach(fk=>{
+      const agg = aggregate(entries.filter(e=>e.firm===fk));
+      rows += `<tr>
+        <td><span class="swatch" style="background:var(${DEFAULT_FIRMS[fk].colorVar})"></span> ${DEFAULT_FIRMS[fk].name}</td>
+        <td>${agg.qtyBought}</td>
+        <td>${agg.totalSpent?fmtUSD(agg.totalSpent):"–"}</td>
+        <td>${agg.totalPayout?fmtUSD(agg.totalPayout):"–"}</td>
+        <td class="${agg.netPL>0?'num-pos':agg.netPL<0?'num-neg':''}">${agg.qtyBought?fmtUSD(agg.netPL):"–"}</td>
+        <td>${fmtPct(agg.roi)}</td>
+        <td>${agg.qtyPassed}</td>
+        <td>${agg.qtyFunded}</td>
+        <td>${fmtPct(agg.passRate)}</td>
+      </tr>`;
+    });
+    const total = aggregate(entries);
+    rows += `<tr class="month-total">
+      <td>Annual Total</td>
+      <td>${total.qtyBought}</td>
+      <td>${total.totalSpent?fmtUSD(total.totalSpent):"–"}</td>
+      <td>${total.totalPayout?fmtUSD(total.totalPayout):"–"}</td>
+      <td class="${total.netPL>0?'num-pos':total.netPL<0?'num-neg':''}">${total.qtyBought?fmtUSD(total.netPL):"–"}</td>
+      <td>${fmtPct(total.roi)}</td>
+      <td>${total.qtyPassed}</td>
+      <td>${total.qtyFunded}</td>
+      <td>${fmtPct(total.passRate)}</td>
+    </tr>`;
+    document.getElementById("firmBreakdownBody").innerHTML = rows;
+  }
+
+  /* ---------- Charts ---------- */
+  const tooltipEl = document.getElementById("tooltip");
+  function showTooltip(html, x, y){
+    tooltipEl.innerHTML = html;
+    tooltipEl.style.left = (x+14)+"px";
+    tooltipEl.style.top = (y+14)+"px";
+    tooltipEl.classList.add("show");
+  }
+  function moveTooltip(x,y){ tooltipEl.style.left=(x+14)+"px"; tooltipEl.style.top=(y+14)+"px"; }
+  function hideTooltip(){ tooltipEl.classList.remove("show"); }
+
+  function renderMonthlyPLChart(){
+    const svg = document.getElementById("chartMonthlyPL");
+    const year = getSelectedYear();
+    const entries = year==="all" ? [] : filteredEntries();
+    const W = Math.max(svg.clientWidth || 560, 560), H = 260;
+    const padL=54, padR=16, padT=16, padB=28;
+    const plotW = W-padL-padR, plotH = H-padT-padB;
+    const values = MONTHS.map((_,m)=> aggregate(entries.filter(e=>entryMonthIdx(e)===m)).netPL );
+    const maxAbs = Math.max(1, ...values.map(v=>Math.abs(v)));
+    const zeroY = padT + plotH/2;
+    const scaleY = (plotH/2 - 10) / maxAbs;
+    const bw = plotW/12;
+
+    let bars = "", labels = "", grid = "";
+    grid += `<line x1="${padL}" y1="${zeroY}" x2="${W-padR}" y2="${zeroY}" stroke="var(--baseline)" stroke-width="1"/>`;
+    values.forEach((v,i)=>{
+      const x = padL + i*bw + bw*0.18;
+      const w = bw*0.64;
+      const barH = Math.abs(v)*scaleY;
+      const y = v>=0 ? zeroY-barH : zeroY;
+      const color = v>=0 ? "var(--good)" : "var(--critical)";
+      bars += `<rect class="barmark" data-idx="${i}" x="${x}" y="${y}" width="${w}" height="${Math.max(barH,1)}" rx="3" fill="${color}" style="cursor:pointer;"></rect>`;
+      labels += `<text x="${x+w/2}" y="${H-8}" font-size="10.5" text-anchor="middle" fill="var(--text-muted)">${MONTHS[i].slice(0,3)}</text>`;
+    });
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    svg.innerHTML = `
+      <text x="4" y="${zeroY+4}" font-size="10" fill="var(--text-muted)">$0</text>
+      ${grid}${bars}${labels}
+    `;
+    svg.querySelectorAll(".barmark").forEach(rect=>{
+      const i = parseInt(rect.getAttribute("data-idx"),10);
+      const v = values[i];
+      rect.addEventListener("mouseenter", ev=>{
+        showTooltip(`<b>${MONTHS[i]} ${year}</b>Net P&amp;L: ${fmtUSD(v)}`, ev.clientX, ev.clientY);
+      });
+      rect.addEventListener("mousemove", ev=> moveTooltip(ev.clientX, ev.clientY));
+      rect.addEventListener("mouseleave", hideTooltip);
+    });
+    if(year==="all"){
+      svg.innerHTML = `<text x="${W/2}" y="${H/2}" text-anchor="middle" fill="var(--text-muted)" font-size="13">Pick a year to see the monthly breakdown</text>`;
+    }
+  }
+
+  function renderFirmSpendChart(){
+    const svg = document.getElementById("chartFirmSpend");
+    const entries = filteredEntries();
+    const W = Math.max(svg.clientWidth || 480, 480), H = 260;
+    const padL=140, padR=70, padT=10, padB=10;
+    const plotW = W-padL-padR, plotH = H-padT-padB;
+    const rows = FIRM_ORDER.map(fk=>({
+      key:fk, name:DEFAULT_FIRMS[fk].name, colorVar:DEFAULT_FIRMS[fk].colorVar,
+      spent: aggregate(entries.filter(e=>e.firm===fk)).totalSpent
+    }));
+    const maxV = Math.max(1, ...rows.map(r=>r.spent));
+    const bh = plotH/rows.length;
+    let bars = "";
+    rows.forEach((r,i)=>{
+      const y = padT + i*bh + bh*0.22;
+      const h = bh*0.56;
+      const w = Math.max((r.spent/maxV)*plotW, r.spent>0?2:0);
+      bars += `
+        <text x="${padL-10}" y="${y+h/2+4}" text-anchor="end" font-size="12" fill="var(--text-secondary)">${r.name}</text>
+        <rect class="firmbar" data-idx="${i}" x="${padL}" y="${y}" width="${w}" height="${h}" rx="4" fill="var(${r.colorVar})" style="cursor:pointer;"></rect>
+        <text x="${padL+w+8}" y="${y+h/2+4}" font-size="11.5" fill="var(--text-primary)" font-weight="600">${fmtUSD(r.spent)}</text>
+      `;
+    });
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    svg.innerHTML = bars;
+    svg.querySelectorAll(".firmbar").forEach(rect=>{
+      const i = parseInt(rect.getAttribute("data-idx"),10);
+      const r = rows[i];
+      rect.addEventListener("mouseenter", ev=> showTooltip(`<b>${r.name}</b>Total spent: ${fmtUSD(r.spent)}`, ev.clientX, ev.clientY));
+      rect.addEventListener("mousemove", ev=> moveTooltip(ev.clientX, ev.clientY));
+      rect.addEventListener("mouseleave", hideTooltip);
+    });
+    document.getElementById("firmLegend").innerHTML = FIRM_ORDER.map(fk=>`
+      <span class="item"><span class="swatch" style="background:var(${DEFAULT_FIRMS[fk].colorVar})"></span>${DEFAULT_FIRMS[fk].name}</span>
+    `).join("");
+  }
+
+  /* ---------- Pricing reference ---------- */
+  function renderPricingGrid(){
+    const grid = document.getElementById("pricingGrid");
+    grid.innerHTML = FIRM_ORDER.map(fk=>{
+      const firm = DEFAULT_FIRMS[fk];
+      const rows = firm.plans.map(p=>`
+        <div class="plan-row">
+          <span class="plabel">${p.label}<span class="pfee">${p.fee}</span></span>
+          <input type="number" step="0.01" min="0" data-firm="${fk}" data-plan="${p.id}" value="${getPlanPrice(fk,p.id)}">
+        </div>
+      `).join("");
+      return `<div class="firm-card">
+        <h3><span class="swatch" style="background:var(${firm.colorVar})"></span>${firm.name}</h3>
+        ${rows}
+      </div>`;
+    }).join("");
+    grid.querySelectorAll("input[data-firm]").forEach(inp=>{
+      inp.addEventListener("change", ()=>{
+        const v = parseFloat(inp.value);
+        setPlanPrice(inp.getAttribute("data-firm"), inp.getAttribute("data-plan"), isNaN(v)?0:v);
+        populatePlanSelect();
+      });
+    });
+  }
+
+  /* ---------- Full re-render ---------- */
+  function renderAll(){
+    populateYearFilter();
+    renderStatTiles();
+    renderEntriesTable();
+    renderMonthlySummary();
+    renderFirmBreakdown();
+    renderMonthlyPLChart();
+    renderFirmSpendChart();
+    renderPricingGrid();
+  }
+
+  /* ---------- Form handling ---------- */
+  const form = document.getElementById("entryForm");
+  document.getElementById("f_firm").addEventListener("change", populatePlanSelect);
+  document.getElementById("f_plan").addEventListener("change", ()=>{
+    const firmKey = document.getElementById("f_firm").value;
+    const planId = document.getElementById("f_plan").value;
+    document.getElementById("f_cost").value = getPlanPrice(firmKey, planId);
+  });
+
+  function resetForm(){
+    form.reset();
+    document.getElementById("f_id").value = "";
+    document.getElementById("f_date").value = new Date().toISOString().slice(0,10);
+    populatePlanSelect();
+    document.getElementById("f_submit").textContent = "Add entry";
+    document.getElementById("f_cancel").style.display = "none";
+  }
+
+  form.addEventListener("submit", ev=>{
+    ev.preventDefault();
+    const id = document.getElementById("f_id").value;
+    const entry = {
+      id: id || uid(),
+      date: document.getElementById("f_date").value,
+      firm: document.getElementById("f_firm").value,
+      planId: document.getElementById("f_plan").value,
+      cost: parseFloat(document.getElementById("f_cost").value)||0,
+      status: document.getElementById("f_status").value,
+      payout: parseFloat(document.getElementById("f_payout").value)||0,
+    };
+    if(id){
+      const idx = state.entries.findIndex(e=>e.id===id);
+      if(idx>=0) state.entries[idx] = entry;
+    } else {
+      state.entries.push(entry);
+    }
+    saveState();
+    resetForm();
+    renderAll();
+  });
+
+  document.getElementById("f_cancel").addEventListener("click", resetForm);
+
+  document.getElementById("entriesBody").addEventListener("click", ev=>{
+    const editId = ev.target.getAttribute("data-edit");
+    const delId = ev.target.getAttribute("data-del");
+    if(editId){
+      const e = state.entries.find(x=>x.id===editId);
+      if(!e) return;
+      document.getElementById("f_id").value = e.id;
+      document.getElementById("f_date").value = e.date;
+      document.getElementById("f_firm").value = e.firm;
+      populatePlanSelect();
+      document.getElementById("f_plan").value = e.planId;
+      document.getElementById("f_cost").value = e.cost;
+      document.getElementById("f_status").value = e.status;
+      document.getElementById("f_payout").value = e.payout;
+      document.getElementById("f_submit").textContent = "Save changes";
+      document.getElementById("f_cancel").style.display = "inline-block";
+      window.scrollTo({top:0, behavior:"smooth"});
+    } else if(delId){
+      if(confirm("Delete this entry? This can't be undone.")){
+        state.entries = state.entries.filter(x=>x.id!==delId);
+        saveState();
+        renderAll();
+      }
+    }
+  });
+
+  document.getElementById("yearFilter").addEventListener("change", renderAll);
+
+  document.getElementById("resetPricesBtn").addEventListener("click", ()=>{
+    if(confirm("Reset all plan prices to shipped defaults? Your logged entries are not affected.")){
+      state.priceOverrides = {};
+      saveState();
+      renderAll();
+    }
+  });
+
+  /* ---------- Data toolbar ---------- */
+  document.getElementById("exportJsonBtn").addEventListener("click", ()=>{
+    const blob = new Blob([JSON.stringify(state,null,2)], {type:"application/json"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "propfirm-tracker-backup.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  document.getElementById("exportCsvBtn").addEventListener("click", ()=>{
+    const header = ["Date","Firm","Plan","Cost","Status","Payout","NetPL","ROI"];
+    const lines = [header.join(",")];
+    state.entries.slice().sort((a,b)=>(a.date||"").localeCompare(b.date||"")).forEach(e=>{
+      const {netPL, roi} = computeEntryMetrics(e);
+      const firm = DEFAULT_FIRMS[e.firm];
+      const plan = getPlan(e.firm, e.planId);
+      lines.push([
+        e.date, firm?firm.name:e.firm, plan?plan.label:e.planId,
+        e.cost.toFixed(2), e.status, e.payout.toFixed(2), netPL.toFixed(2),
+        roi===null?"":( (roi*100).toFixed(1) )
+      ].map(v=>`"${String(v).replace(/"/g,'""')}"`).join(","));
+    });
+    const blob = new Blob([lines.join("\n")], {type:"text/csv"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "propfirm-tracker-entries.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  document.getElementById("importInput").addEventListener("change", ev=>{
+    const file = ev.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try{
+        const parsed = JSON.parse(reader.result);
+        if(!parsed || !Array.isArray(parsed.entries)) throw new Error("bad shape");
+        if(confirm(`Import ${parsed.entries.length} entries? This will replace your current data.`)){
+          state = { entries: parsed.entries, priceOverrides: parsed.priceOverrides || {} };
+          saveState();
+          renderAll();
+        }
+      }catch(e){
+        alert("Could not read that file — make sure it's a JSON backup exported from this app.");
+      }
+      ev.target.value = "";
+    };
+    reader.readAsText(file);
+  });
+
+  document.getElementById("clearDataBtn").addEventListener("click", ()=>{
+    if(confirm("Delete ALL entries and price overrides? This cannot be undone.")){
+      state = defaultState();
+      saveState();
+      renderAll();
+    }
+  });
+
+  window.addEventListener("resize", ()=>{ renderMonthlyPLChart(); renderFirmSpendChart(); });
+
+  /* ---------- Init ---------- */
+  populateFirmSelect();
+  resetForm();
+  renderAll();
+})();
+</script>
+</body>
+</html>
