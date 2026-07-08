@@ -122,6 +122,12 @@
   .num-pos{color:var(--good);}
   .num-neg{color:var(--critical);}
 
+  #importMapTable th{font-weight:600; font-size:11.5px;}
+  #importMapTable .colhead-sub{font-weight:400; color:var(--text-muted); font-size:11px; text-transform:none; letter-spacing:0;}
+  #importMapTable select{width:100%; min-width:120px;}
+  tr.import-warn td{background:rgba(250,178,25,0.12);}
+  #importPreviewBody select, #importPreviewBody input{font-size:12.5px; padding:5px 6px;}
+
   details.month-block{border-bottom:1px solid var(--gridline); padding:6px 0;}
   details.month-block > summary{cursor:pointer; font-weight:700; padding:6px 4px; list-style:none; display:flex; flex-wrap:wrap; justify-content:space-between; gap:4px 10px;}
   details.month-block > summary::-webkit-details-marker{display:none;}
@@ -227,6 +233,45 @@
       </div>
       <input type="hidden" id="f_id">
     </form>
+  </div>
+
+  <div class="card">
+    <h2>Bulk Import <span class="hint">paste a table from a spreadsheet or copied off a firm's dashboard</span></h2>
+
+    <div id="importStep1">
+      <textarea id="importPasteArea" rows="6" style="width:100%; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px;" placeholder="Paste rows here — tab-separated, comma-separated, or a copied table. Example:&#10;Date&#9;Firm&#9;Plan&#9;Cost&#9;Status&#9;Payout&#10;2026-04-15&#9;Lucid Trading&#9;LucidFlex 50K&#9;95&#9;Funded&#9;3600"></textarea>
+      <div class="toolbar" style="margin-top:10px;">
+        <button type="button" class="primary" id="importParseBtn">Parse pasted data</button>
+        <button type="button" class="ghost" id="importClearBtn">Clear</button>
+      </div>
+      <div class="note">Works with an exported CSV, a table copied straight off a firm's billing page, or rows you type by hand. Nothing is saved until you review and confirm.</div>
+    </div>
+
+    <div id="importStep2" style="display:none;">
+      <h3 style="font-size:13px; margin:14px 0 8px;">Step 1 — what does each column mean?</h3>
+      <div class="scroll-hint">← Swipe to see all columns →</div>
+      <div class="table-wrap"><table id="importMapTable"></table></div>
+      <div class="toolbar" style="margin-top:10px;">
+        <button type="button" class="primary" id="importBuildPreviewBtn">Build preview</button>
+        <button type="button" class="ghost" id="importBackBtn">Start over</button>
+      </div>
+    </div>
+
+    <div id="importStep3" style="display:none;">
+      <h3 style="font-size:13px; margin:14px 0 8px;">Step 2 — review &amp; fix before importing <span class="hint" id="importWarnCount"></span></h3>
+      <div class="scroll-hint">← Swipe to see all columns →</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Skip</th><th>Date</th><th>Firm</th><th>Plan</th><th>Cost</th><th>Status</th><th>Payout</th><th></th></tr></thead>
+          <tbody id="importPreviewBody"></tbody>
+        </table>
+      </div>
+      <div class="toolbar" style="margin-top:10px;">
+        <button type="button" class="primary" id="importCommitBtn">Import entries</button>
+        <button type="button" class="ghost" id="importCancelBtn">Cancel</button>
+      </div>
+      <div class="note">Rows highlighted in yellow have a date, firm, or cost we couldn't confidently read — fix them inline or tick "Skip" to leave them out.</div>
+    </div>
   </div>
 
   <div class="card">
@@ -386,6 +431,126 @@
   const fmtUSD = n => (n<0?"-$":"$") + Math.abs(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
   const fmtPct = n => (n===null || !isFinite(n)) ? "–" : (n*100).toFixed(1)+"%";
   const uid = () => "e" + Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+  const escapeHtml = s => String(s==null?"":s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+  /* ---------- Bulk import: parsing & fuzzy matching ---------- */
+  const IMPORT_FIELDS = [
+    {key:"ignore", label:"Ignore"},
+    {key:"date",   label:"Date"},
+    {key:"firm",   label:"Firm"},
+    {key:"plan",   label:"Plan / Account"},
+    {key:"cost",   label:"Cost ($)"},
+    {key:"status", label:"Status"},
+    {key:"payout", label:"Payout ($)"},
+  ];
+  const FIRM_ALIASES = {
+    topstep: ["topstep","top step"],
+    mff:     ["myfundedfutures","my funded futures","mff"],
+    lucid:   ["lucid"],
+    tpt:     ["take profit trader","takeprofittrader","tpt"],
+    alpha:   ["alpha futures","alphafutures","alpha"],
+  };
+
+  function splitDelimited(line, delimiter){
+    if(delimiter===","){
+      const out=[]; let cur=""; let inQ=false;
+      for(let i=0;i<line.length;i++){
+        const ch=line[i];
+        if(ch==='"'){
+          if(inQ && line[i+1]==='"'){ cur+='"'; i++; } else { inQ=!inQ; }
+        } else if(ch===","&&!inQ){ out.push(cur.trim()); cur=""; }
+        else cur+=ch;
+      }
+      out.push(cur.trim());
+      return out;
+    }
+    if(delimiter==="\t") return line.split("\t").map(s=>s.trim());
+    return line.split(/\s{2,}/).map(s=>s.trim()).filter((s,i,arr)=> !(s==="" && (i===0||i===arr.length-1)));
+  }
+
+  function parsePastedText(text){
+    const lines = text.split(/\r\n|\n|\r/).filter(l=>l.trim().length>0);
+    if(lines.length===0) return null;
+    let delimiter = "\t";
+    if(lines[0].split("\t").length>1) delimiter="\t";
+    else if(lines[0].split(",").length>1) delimiter=",";
+    else delimiter="  ";
+    const rows = lines.map(l=> splitDelimited(l, delimiter));
+    return {rows};
+  }
+
+  function looksLikeHeader(row){
+    const kw = ["date","firm","plan","account","cost","price","fee","amount","status","phase","payout","withdraw","paid","purchase","product","type","description"];
+    let hits=0;
+    row.forEach(cell=>{
+      const c=(cell||"").toLowerCase();
+      if(kw.some(k=>c.includes(k))) hits++;
+    });
+    return hits>=2;
+  }
+
+  function guessMapping(headerText){
+    const c=(headerText||"").toLowerCase();
+    if(c.includes("date")) return "date";
+    if(c.includes("firm")||c.includes("prop")) return "firm";
+    if(c.includes("payout")||c.includes("withdraw")) return "payout";
+    if(c.includes("status")||c.includes("phase")||c.includes("state")) return "status";
+    if(c.includes("cost")||c.includes("price")||c.includes("fee")||c.includes("paid")||c.includes("purchase")||c.includes("amount")) return "cost";
+    if(c.includes("plan")||c.includes("account")||c.includes("product")||c.includes("type")||c.includes("description")) return "plan";
+    return "ignore";
+  }
+
+  function parseDateLoose(text){
+    if(!text) return null;
+    text = String(text).trim();
+    let m = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if(m) return `${m[1]}-${m[2].padStart(2,"0")}-${m[3].padStart(2,"0")}`;
+    m = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if(m) return `${m[3]}-${m[1].padStart(2,"0")}-${m[2].padStart(2,"0")}`;
+    const d = new Date(text);
+    if(!isNaN(d.getTime())) return d.toISOString().slice(0,10);
+    return null;
+  }
+
+  function parseMoneyLoose(text){
+    if(text===undefined || text===null || text==="") return null;
+    const cleaned = String(text).replace(/[^0-9.\-]/g,"");
+    if(cleaned===""||cleaned==="-"||cleaned===".") return null;
+    const v = parseFloat(cleaned);
+    return isNaN(v) ? null : v;
+  }
+
+  function fuzzyMatchFirm(text){
+    if(!text) return null;
+    const c = text.toLowerCase().replace(/[^a-z0-9 ]/g,"").trim();
+    for(const [key,aliases] of Object.entries(FIRM_ALIASES)){
+      if(aliases.some(a=>c.includes(a))) return key;
+    }
+    return null;
+  }
+
+  function fuzzyMatchStatus(text){
+    if(!text) return null;
+    const c = text.toLowerCase();
+    if(/fail|bust|breach|violat/.test(c)) return "failed";
+    if(/fund/.test(c)) return "funded";
+    if(/pass/.test(c)) return "passed";
+    if(/pend|progress|active|ongoing|running|open/.test(c)) return "pending";
+    return null;
+  }
+
+  function fuzzyMatchPlan(firmKey, text){
+    const firm = DEFAULT_FIRMS[firmKey];
+    if(!firm) return null;
+    const c = (text||"").toLowerCase();
+    const sizeMatch = c.match(/(\d+)\s*k/);
+    const size = sizeMatch ? parseInt(sizeMatch[1],10)*1000 : null;
+    let candidates = size ? firm.plans.filter(p=>p.size===size) : firm.plans;
+    if(candidates.length===0) candidates = firm.plans;
+    const words = c.split(/[^a-z]+/).filter(w=>w.length>2);
+    const best = candidates.find(p=> words.some(w=> p.label.toLowerCase().includes(w)) );
+    return (best || candidates[0]).id;
+  }
 
   /* ---------- Derived calculations ---------- */
   function computeEntryMetrics(e){
@@ -867,6 +1032,188 @@
   });
 
   window.addEventListener("resize", ()=>{ renderMonthlyPLChart(); renderFirmSpendChart(); });
+
+  /* ---------- Bulk import: UI wiring ---------- */
+  let importParsed = null;   // { rows, headerRow, columns:[{index,header,mapping}] }
+  let importPreview = [];    // [{date,firm,planId,cost,status,payout,warnings,skip}]
+
+  function importShowStep(n){
+    document.getElementById("importStep1").style.display = n===1 ? "block" : "none";
+    document.getElementById("importStep2").style.display = n===2 ? "block" : "none";
+    document.getElementById("importStep3").style.display = n===3 ? "block" : "none";
+  }
+
+  function resetImportUI(){
+    importParsed = null; importPreview = [];
+    document.getElementById("importPasteArea").value = "";
+    importShowStep(1);
+  }
+
+  function renderImportMapping(){
+    const table = document.getElementById("importMapTable");
+    const sampleRow = importParsed.rows[importParsed.headerRow ? 1 : 0] || [];
+    const headHtml = importParsed.columns.map((c,i)=>`
+      <th>Column ${i+1}${c.header?`<div class="colhead-sub">"${escapeHtml(c.header)}"</div>`:""}</th>
+    `).join("");
+    const selectHtml = importParsed.columns.map((c,i)=>`
+      <td><select data-colmap="${i}">${IMPORT_FIELDS.map(f=>`<option value="${f.key}" ${c.mapping===f.key?"selected":""}>${f.label}</option>`).join("")}</select></td>
+    `).join("");
+    const sampleHtml = importParsed.columns.map((c,i)=>`
+      <td style="color:var(--text-muted); font-weight:400; text-align:left;">${escapeHtml(sampleRow[i]||"")}</td>
+    `).join("");
+    table.innerHTML = `
+      <thead><tr>${headHtml}</tr></thead>
+      <tbody>
+        <tr>${selectHtml}</tr>
+        <tr>${sampleHtml}</tr>
+      </tbody>
+    `;
+    table.querySelectorAll("select[data-colmap]").forEach(sel=>{
+      sel.addEventListener("change", ()=>{
+        importParsed.columns[parseInt(sel.getAttribute("data-colmap"),10)].mapping = sel.value;
+      });
+    });
+  }
+
+  function buildPreviewFromMapping(){
+    const dataRows = importParsed.headerRow ? importParsed.rows.slice(1) : importParsed.rows;
+    const idxFor = key => importParsed.columns.findIndex(c=>c.mapping===key);
+    const dateIdx=idxFor("date"), firmIdx=idxFor("firm"), planIdx=idxFor("plan"),
+          costIdx=idxFor("cost"), statusIdx=idxFor("status"), payoutIdx=idxFor("payout");
+
+    importPreview = dataRows.map(row=>{
+      const rawDate = dateIdx>=0 ? row[dateIdx] : "";
+      const rawFirm = firmIdx>=0 ? row[firmIdx] : "";
+      const rawPlan = planIdx>=0 ? row[planIdx] : "";
+      const rawCost = costIdx>=0 ? row[costIdx] : "";
+      const rawStatus = statusIdx>=0 ? row[statusIdx] : "";
+      const rawPayout = payoutIdx>=0 ? row[payoutIdx] : "";
+
+      const date = parseDateLoose(rawDate);
+      const firmKey = fuzzyMatchFirm(rawFirm) || fuzzyMatchFirm(rawPlan);
+      const cost = parseMoneyLoose(rawCost);
+      const payout = parseMoneyLoose(rawPayout);
+      const status = fuzzyMatchStatus(rawStatus) || "pending";
+      const resolvedFirm = firmKey || FIRM_ORDER[0];
+      const planId = fuzzyMatchPlan(resolvedFirm, rawPlan) || DEFAULT_FIRMS[resolvedFirm].plans[0].id;
+
+      const warnings = [];
+      if(!date) warnings.push("date");
+      if(!firmKey) warnings.push("firm");
+      if(cost===null) warnings.push("cost");
+
+      return {
+        date: date || new Date().toISOString().slice(0,10),
+        firm: resolvedFirm,
+        planId,
+        cost: cost===null ? 0 : cost,
+        status,
+        payout: payout===null ? 0 : payout,
+        warnings,
+        skip: false,
+      };
+    });
+    renderImportPreview();
+  }
+
+  function renderImportPreview(){
+    const body = document.getElementById("importPreviewBody");
+    const warnCount = importPreview.filter(r=>r.warnings.length>0).length;
+    document.getElementById("importWarnCount").textContent = importPreview.length
+      ? (warnCount ? `${warnCount} of ${importPreview.length} row(s) need a look` : `all ${importPreview.length} row(s) look good`)
+      : "";
+    body.innerHTML = importPreview.map((r,i)=>{
+      const firmOptions = FIRM_ORDER.map(fk=>`<option value="${fk}" ${fk===r.firm?"selected":""}>${DEFAULT_FIRMS[fk].name}</option>`).join("");
+      const planOptions = DEFAULT_FIRMS[r.firm].plans.map(p=>`<option value="${p.id}" ${p.id===r.planId?"selected":""}>${p.label}</option>`).join("");
+      const statusOptions = ["pending","failed","passed","funded"].map(s=>{
+        const labels = {pending:"In Progress", failed:"Failed", passed:"Passed", funded:"Funded"};
+        return `<option value="${s}" ${s===r.status?"selected":""}>${labels[s]}</option>`;
+      }).join("");
+      return `<tr data-idx="${i}" class="${r.warnings.length?'import-warn':''}">
+        <td><input type="checkbox" data-imp-skip="${i}" ${r.skip?"checked":""} title="Skip this row"></td>
+        <td><input type="date" data-imp-field="date" data-idx="${i}" value="${r.date}" style="width:132px;"></td>
+        <td><select data-imp-field="firm" data-idx="${i}">${firmOptions}</select></td>
+        <td><select data-imp-field="planId" data-idx="${i}">${planOptions}</select></td>
+        <td><input type="number" step="0.01" min="0" data-imp-field="cost" data-idx="${i}" value="${r.cost}" style="width:85px; text-align:right;"></td>
+        <td><select data-imp-field="status" data-idx="${i}">${statusOptions}</select></td>
+        <td><input type="number" step="0.01" min="0" data-imp-field="payout" data-idx="${i}" value="${r.payout}" style="width:85px; text-align:right;"></td>
+        <td>${r.warnings.length?`<span class="badge failed" title="Check: ${r.warnings.join(', ')}">Check</span>`:`<span class="badge funded">OK</span>`}</td>
+      </tr>`;
+    }).join("");
+
+    body.querySelectorAll("[data-imp-field]").forEach(el=>{
+      el.addEventListener("change", ()=>{
+        const idx = parseInt(el.getAttribute("data-idx"),10);
+        const field = el.getAttribute("data-imp-field");
+        if(field==="firm"){
+          importPreview[idx].firm = el.value;
+          importPreview[idx].planId = DEFAULT_FIRMS[el.value].plans[0].id;
+          importPreview[idx].warnings = importPreview[idx].warnings.filter(w=>w!=="firm");
+          renderImportPreview();
+          return;
+        }
+        if(field==="planId"){ importPreview[idx].planId = el.value; return; }
+        if(field==="status"){ importPreview[idx].status = el.value; return; }
+        if(field==="cost"){
+          importPreview[idx].cost = parseFloat(el.value)||0;
+          importPreview[idx].warnings = importPreview[idx].warnings.filter(w=>w!=="cost");
+          el.closest("tr").classList.toggle("import-warn", importPreview[idx].warnings.length>0);
+          return;
+        }
+        if(field==="payout"){ importPreview[idx].payout = parseFloat(el.value)||0; return; }
+        if(field==="date"){
+          importPreview[idx].date = el.value;
+          importPreview[idx].warnings = importPreview[idx].warnings.filter(w=>w!=="date");
+          el.closest("tr").classList.toggle("import-warn", importPreview[idx].warnings.length>0);
+          return;
+        }
+      });
+    });
+    body.querySelectorAll("[data-imp-skip]").forEach(cb=>{
+      cb.addEventListener("change", ()=>{
+        importPreview[parseInt(cb.getAttribute("data-imp-skip"),10)].skip = cb.checked;
+      });
+    });
+  }
+
+  document.getElementById("importParseBtn").addEventListener("click", ()=>{
+    const text = document.getElementById("importPasteArea").value;
+    const parsed = parsePastedText(text);
+    if(!parsed || parsed.rows.length===0){ alert("Paste some rows first."); return; }
+    const headerDetected = looksLikeHeader(parsed.rows[0]);
+    const numCols = Math.max(...parsed.rows.map(r=>r.length));
+    const columns = [];
+    for(let i=0;i<numCols;i++){
+      const headerText = headerDetected ? (parsed.rows[0][i]||"") : "";
+      columns.push({ index:i, header:headerText, mapping: headerDetected ? guessMapping(headerText) : "ignore" });
+    }
+    importParsed = { rows: parsed.rows, headerRow: headerDetected, columns };
+    renderImportMapping();
+    importShowStep(2);
+  });
+  document.getElementById("importClearBtn").addEventListener("click", ()=>{
+    document.getElementById("importPasteArea").value = "";
+  });
+  document.getElementById("importBackBtn").addEventListener("click", resetImportUI);
+  document.getElementById("importCancelBtn").addEventListener("click", resetImportUI);
+  document.getElementById("importBuildPreviewBtn").addEventListener("click", ()=>{
+    buildPreviewFromMapping();
+    importShowStep(3);
+  });
+  document.getElementById("importCommitBtn").addEventListener("click", ()=>{
+    const toImport = importPreview.filter(r=>!r.skip);
+    if(toImport.length===0){ alert("Nothing to import — every row is marked Skip."); return; }
+    if(!confirm(`Import ${toImport.length} entr${toImport.length===1?"y":"ies"}? You can edit or delete them afterward from the Entries table.`)) return;
+    toImport.forEach(r=>{
+      state.entries.push({
+        id: uid(), date: r.date, firm: r.firm, planId: r.planId,
+        cost: r.cost, status: r.status, payout: r.payout,
+      });
+    });
+    saveState();
+    resetImportUI();
+    renderAll();
+  });
 
   /* ---------- Init ---------- */
   populateFirmSelect();
