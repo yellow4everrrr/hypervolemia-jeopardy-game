@@ -239,12 +239,23 @@
     <h2>Bulk Import <span class="hint">paste a table from a spreadsheet or copied off a firm's dashboard</span></h2>
 
     <div id="importStep1">
+      <div class="form-grid" style="grid-template-columns:1fr 1fr; margin-bottom:12px;">
+        <label>What does each row represent?
+          <select id="importModeSelect">
+            <option value="transaction">One row = one purchase (date, firm, cost, status, payout)</option>
+            <option value="aggregate">One row = a month + firm summary (qty bought, total spent, qty passed/funded — like a spreadsheet template)</option>
+          </select>
+        </label>
+        <label id="importYearWrap" style="display:none;">Year this data is for
+          <input type="number" id="importYear" min="2000" max="2100" step="1">
+        </label>
+      </div>
       <textarea id="importPasteArea" rows="6" style="width:100%; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px;" placeholder="Paste rows here — tab-separated, comma-separated, or a copied table. Example:&#10;Date&#9;Firm&#9;Plan&#9;Cost&#9;Status&#9;Payout&#10;2026-04-15&#9;Lucid Trading&#9;LucidFlex 50K&#9;95&#9;Funded&#9;3600"></textarea>
       <div class="toolbar" style="margin-top:10px;">
         <button type="button" class="primary" id="importParseBtn">Parse pasted data</button>
         <button type="button" class="ghost" id="importClearBtn">Clear</button>
       </div>
-      <div class="note">Works with an exported CSV, a table copied straight off a firm's billing page, or rows you type by hand. Nothing is saved until you review and confirm.</div>
+      <div class="note">Works with an exported CSV, a table copied straight off a firm's billing page, a Google Sheets selection, or rows you type by hand. Nothing is saved until you review and confirm.</div>
     </div>
 
     <div id="importStep2" style="display:none;">
@@ -262,7 +273,7 @@
       <div class="scroll-hint">← Swipe to see all columns →</div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Skip</th><th>Date</th><th>Firm</th><th>Plan</th><th>Cost</th><th>Status</th><th>Payout</th><th></th></tr></thead>
+          <thead><tr id="importPreviewHead"></tr></thead>
           <tbody id="importPreviewBody"></tbody>
         </table>
       </div>
@@ -270,7 +281,7 @@
         <button type="button" class="primary" id="importCommitBtn">Import entries</button>
         <button type="button" class="ghost" id="importCancelBtn">Cancel</button>
       </div>
-      <div class="note">Rows highlighted in yellow have a date, firm, or cost we couldn't confidently read — fix them inline or tick "Skip" to leave them out.</div>
+      <div class="note" id="importPreviewNote"></div>
     </div>
   </div>
 
@@ -443,6 +454,17 @@
     {key:"status", label:"Status"},
     {key:"payout", label:"Payout ($)"},
   ];
+  const AGGREGATE_FIELDS = [
+    {key:"ignore",     label:"Ignore"},
+    {key:"month",      label:"Month"},
+    {key:"firm",       label:"Firm / Plan"},
+    {key:"costEval",   label:"Cost / Eval ($)"},
+    {key:"qtyBought",  label:"Qty Bought"},
+    {key:"totalSpent", label:"Total Spent ($) — optional, used if no Cost/Eval"},
+    {key:"netPayout",  label:"Net Payout ($)"},
+    {key:"qtyPassed",  label:"Qty Passed"},
+    {key:"qtyFunded",  label:"Qty Funded"},
+  ];
   const FIRM_ALIASES = {
     topstep: ["topstep","top step"],
     mff:     ["myfundedfutures","my funded futures","mff"],
@@ -480,7 +502,7 @@
   }
 
   function looksLikeHeader(row){
-    const kw = ["date","firm","plan","account","cost","price","fee","amount","status","phase","payout","withdraw","paid","purchase","product","type","description"];
+    const kw = ["date","firm","plan","account","cost","price","fee","amount","status","phase","payout","withdraw","paid","purchase","product","type","description","month","qty","total","passed","funded"];
     let hits=0;
     row.forEach(cell=>{
       const c=(cell||"").toLowerCase();
@@ -497,6 +519,19 @@
     if(c.includes("status")||c.includes("phase")||c.includes("state")) return "status";
     if(c.includes("cost")||c.includes("price")||c.includes("fee")||c.includes("paid")||c.includes("purchase")||c.includes("amount")) return "cost";
     if(c.includes("plan")||c.includes("account")||c.includes("product")||c.includes("type")||c.includes("description")) return "plan";
+    return "ignore";
+  }
+
+  function guessAggregateMapping(headerText){
+    const c=(headerText||"").toLowerCase();
+    if(c.includes("month")) return "month";
+    if(c.includes("firm")||c.includes("plan")||c.includes("account")||c.includes("product")) return "firm";
+    if(c.includes("payout")||c.includes("withdraw")) return "netPayout";
+    if(c.includes("qty")&&c.includes("passed")) return "qtyPassed";
+    if(c.includes("qty")&&c.includes("funded")) return "qtyFunded";
+    if(c.includes("qty")||c.includes("bought")) return "qtyBought";
+    if(c.includes("total")&&c.includes("spent")) return "totalSpent";
+    if((c.includes("cost")||c.includes("price"))&&(c.includes("eval")||c.includes("each")||!c.includes("total"))) return "costEval";
     return "ignore";
   }
 
@@ -539,17 +574,40 @@
     return null;
   }
 
+  const PLAN_TEXT_SYNONYMS = [
+    [/\bnaf\b/g, "no activation fee"],
+    [/\bstd\b/g, "standard"],
+    [/\bact\b/g, "activation"],
+  ];
+
   function fuzzyMatchPlan(firmKey, text){
     const firm = DEFAULT_FIRMS[firmKey];
     if(!firm) return null;
-    const c = (text||"").toLowerCase();
+    let c = (text||"").toLowerCase();
     const sizeMatch = c.match(/(\d+)\s*k/);
     const size = sizeMatch ? parseInt(sizeMatch[1],10)*1000 : null;
     let candidates = size ? firm.plans.filter(p=>p.size===size) : firm.plans;
     if(candidates.length===0) candidates = firm.plans;
-    const words = c.split(/[^a-z]+/).filter(w=>w.length>2);
+    PLAN_TEXT_SYNONYMS.forEach(([re,rep])=>{ c = c.replace(re,rep); });
+    const firmNameWords = firm.name.toLowerCase().split(/[^a-z]+/).filter(Boolean);
+    const words = c.split(/[^a-z]+/).filter(w=>w.length>2 && !firmNameWords.includes(w));
     const best = candidates.find(p=> words.some(w=> p.label.toLowerCase().includes(w)) );
     return (best || candidates[0]).id;
+  }
+
+  function parseIntLoose(text){
+    const v = parseMoneyLoose(text);
+    return v===null ? 0 : Math.round(v);
+  }
+
+  function fuzzyMatchMonth(text){
+    if(!text) return null;
+    const c = text.trim().toLowerCase();
+    for(let i=0;i<MONTHS.length;i++){
+      const full = MONTHS[i].toLowerCase();
+      if(c===full || c===full.slice(0,3) || c.startsWith(full.slice(0,3))) return i;
+    }
+    return null;
   }
 
   /* ---------- Derived calculations ---------- */
@@ -1035,7 +1093,10 @@
 
   /* ---------- Bulk import: UI wiring ---------- */
   let importParsed = null;   // { rows, headerRow, columns:[{index,header,mapping}] }
-  let importPreview = [];    // [{date,firm,planId,cost,status,payout,warnings,skip}]
+  let importPreview = [];    // transaction mode: [{date,firm,planId,cost,status,payout,warnings,skip}]
+  let importAggPreview = []; // aggregate mode: [{monthIdx,firm,planId,qtyBought,costEval,netPayout,qtyPassed,qtyFunded,warnings,skip}]
+
+  function importMode(){ return document.getElementById("importModeSelect").value; }
 
   function importShowStep(n){
     document.getElementById("importStep1").style.display = n===1 ? "block" : "none";
@@ -1044,19 +1105,30 @@
   }
 
   function resetImportUI(){
-    importParsed = null; importPreview = [];
+    importParsed = null; importPreview = []; importAggPreview = [];
     document.getElementById("importPasteArea").value = "";
     importShowStep(1);
   }
 
+  document.getElementById("importModeSelect").addEventListener("change", ()=>{
+    const yearWrap = document.getElementById("importYearWrap");
+    if(importMode()==="aggregate"){
+      yearWrap.style.display = "flex";
+      if(!document.getElementById("importYear").value) document.getElementById("importYear").value = new Date().getFullYear();
+    } else {
+      yearWrap.style.display = "none";
+    }
+  });
+
   function renderImportMapping(){
     const table = document.getElementById("importMapTable");
+    const fields = importMode()==="aggregate" ? AGGREGATE_FIELDS : IMPORT_FIELDS;
     const sampleRow = importParsed.rows[importParsed.headerRow ? 1 : 0] || [];
     const headHtml = importParsed.columns.map((c,i)=>`
       <th>Column ${i+1}${c.header?`<div class="colhead-sub">"${escapeHtml(c.header)}"</div>`:""}</th>
     `).join("");
     const selectHtml = importParsed.columns.map((c,i)=>`
-      <td><select data-colmap="${i}">${IMPORT_FIELDS.map(f=>`<option value="${f.key}" ${c.mapping===f.key?"selected":""}>${f.label}</option>`).join("")}</select></td>
+      <td><select data-colmap="${i}">${fields.map(f=>`<option value="${f.key}" ${c.mapping===f.key?"selected":""}>${f.label}</option>`).join("")}</select></td>
     `).join("");
     const sampleHtml = importParsed.columns.map((c,i)=>`
       <td style="color:var(--text-muted); font-weight:400; text-align:left;">${escapeHtml(sampleRow[i]||"")}</td>
@@ -1075,6 +1147,159 @@
     });
   }
 
+  /* ----- Aggregate mode: month+firm summary rows -> synthetic per-unit entries ----- */
+  function buildAggregatePreviewFromMapping(){
+    const idxFor = key => importParsed.columns.findIndex(c=>c.mapping===key);
+    const monthIdx_=idxFor("month"), firmIdx=idxFor("firm"), costIdx=idxFor("costEval"),
+          qtyIdx=idxFor("qtyBought"), totalSpentIdx=idxFor("totalSpent"), payoutIdx=idxFor("netPayout"),
+          passedIdx=idxFor("qtyPassed"), fundedIdx=idxFor("qtyFunded");
+
+    let dataRows = (importParsed.headerRow ? importParsed.rows.slice(1) : importParsed.rows).map(r=>r.slice());
+
+    // forward-fill the Month column (spreadsheets merge it vertically, so it's often blank after row 1 of each group)
+    if(monthIdx_>=0){
+      let lastMonth = "";
+      dataRows.forEach(row=>{
+        if(row[monthIdx_] && row[monthIdx_].trim()!=="") lastMonth = row[monthIdx_];
+        else row[monthIdx_] = lastMonth;
+      });
+    }
+
+    importAggPreview = dataRows.filter(row=>{
+      if(row.every(cell=>!cell || !cell.trim())) return false;
+      if(row.some(cell=> /total/i.test(cell||"") || /annual/i.test(cell||"") )) return false;
+      return true;
+    }).map(row=>{
+      const rawMonth = monthIdx_>=0 ? row[monthIdx_] : "";
+      const rawFirm = firmIdx>=0 ? row[firmIdx] : "";
+      const rawCost = costIdx>=0 ? row[costIdx] : "";
+      const rawQty = qtyIdx>=0 ? row[qtyIdx] : "";
+      const rawTotalSpent = totalSpentIdx>=0 ? row[totalSpentIdx] : "";
+      const rawPayout = payoutIdx>=0 ? row[payoutIdx] : "";
+      const rawPassed = passedIdx>=0 ? row[passedIdx] : "";
+      const rawFunded = fundedIdx>=0 ? row[fundedIdx] : "";
+
+      const monthIdxResolved = fuzzyMatchMonth(rawMonth);
+      const firmKey = fuzzyMatchFirm(rawFirm);
+      const resolvedFirm = firmKey || FIRM_ORDER[0];
+      const planId = fuzzyMatchPlan(resolvedFirm, rawFirm) || DEFAULT_FIRMS[resolvedFirm].plans[0].id;
+      const qtyBought = parseIntLoose(rawQty);
+      let costEval = parseMoneyLoose(rawCost);
+      if(costEval===null){
+        const totalSpent = parseMoneyLoose(rawTotalSpent);
+        costEval = (totalSpent!==null && qtyBought>0) ? totalSpent/qtyBought : null;
+      }
+      const netPayout = parseMoneyLoose(rawPayout);
+      let qtyPassed = parseIntLoose(rawPassed);
+      let qtyFunded = parseIntLoose(rawFunded);
+      qtyPassed = Math.min(qtyPassed, qtyBought);
+      qtyFunded = Math.min(qtyFunded, qtyPassed);
+
+      const warnings = [];
+      if(monthIdxResolved===null) warnings.push("month");
+      if(!firmKey) warnings.push("firm");
+      if(costEval===null) warnings.push("cost");
+
+      return {
+        monthIdx: monthIdxResolved===null ? 0 : monthIdxResolved,
+        firm: resolvedFirm, planId,
+        qtyBought, costEval: costEval===null?0:costEval,
+        netPayout: netPayout===null?0:netPayout,
+        qtyPassed, qtyFunded,
+        warnings, skip: false,
+      };
+    }).filter(r => r.qtyBought>0); // rows with nothing bought that month carry no data to import
+
+    renderAggregatePreview();
+  }
+
+  function renderAggregatePreview(){
+    document.getElementById("importPreviewHead").innerHTML =
+      `<th>Skip</th><th>Month</th><th>Firm</th><th>Plan</th><th>Qty</th><th>Cost/Eval</th><th>Net Payout</th><th>Passed</th><th>Funded</th><th></th>`;
+    const body = document.getElementById("importPreviewBody");
+    const warnCount = importAggPreview.filter(r=>r.warnings.length>0).length;
+    document.getElementById("importWarnCount").textContent = importAggPreview.length
+      ? (warnCount ? `${warnCount} of ${importAggPreview.length} row(s) need a look` : `all ${importAggPreview.length} row(s) look good`)
+      : "no rows with a quantity bought were found";
+    document.getElementById("importPreviewNote").textContent =
+      "Each row becomes that many individual entries dated to the 1st of its month, so charts and totals add up the same way they would if logged one at a time.";
+    body.innerHTML = importAggPreview.map((r,i)=>{
+      const monthOptions = MONTHS.map((m,mi)=>`<option value="${mi}" ${mi===r.monthIdx?"selected":""}>${m}</option>`).join("");
+      const firmOptions = FIRM_ORDER.map(fk=>`<option value="${fk}" ${fk===r.firm?"selected":""}>${DEFAULT_FIRMS[fk].name}</option>`).join("");
+      const planOptions = DEFAULT_FIRMS[r.firm].plans.map(p=>`<option value="${p.id}" ${p.id===r.planId?"selected":""}>${p.label}</option>`).join("");
+      return `<tr data-idx="${i}" class="${r.warnings.length?'import-warn':''}">
+        <td><input type="checkbox" data-agg-skip="${i}" ${r.skip?"checked":""} title="Skip this row"></td>
+        <td><select data-agg-field="monthIdx" data-idx="${i}">${monthOptions}</select></td>
+        <td><select data-agg-field="firm" data-idx="${i}">${firmOptions}</select></td>
+        <td><select data-agg-field="planId" data-idx="${i}">${planOptions}</select></td>
+        <td><input type="number" min="0" step="1" data-agg-field="qtyBought" data-idx="${i}" value="${r.qtyBought}" style="width:70px; text-align:right;"></td>
+        <td><input type="number" min="0" step="0.01" data-agg-field="costEval" data-idx="${i}" value="${r.costEval}" style="width:80px; text-align:right;"></td>
+        <td><input type="number" min="0" step="0.01" data-agg-field="netPayout" data-idx="${i}" value="${r.netPayout}" style="width:90px; text-align:right;"></td>
+        <td><input type="number" min="0" step="1" data-agg-field="qtyPassed" data-idx="${i}" value="${r.qtyPassed}" style="width:65px; text-align:right;"></td>
+        <td><input type="number" min="0" step="1" data-agg-field="qtyFunded" data-idx="${i}" value="${r.qtyFunded}" style="width:65px; text-align:right;"></td>
+        <td>${r.warnings.length?`<span class="badge failed" title="Check: ${r.warnings.join(', ')}">Check</span>`:`<span class="badge funded">OK</span>`}</td>
+      </tr>`;
+    }).join("");
+
+    body.querySelectorAll("[data-agg-field]").forEach(el=>{
+      el.addEventListener("change", ()=>{
+        const idx = parseInt(el.getAttribute("data-idx"),10);
+        const field = el.getAttribute("data-agg-field");
+        const row = importAggPreview[idx];
+        if(field==="firm"){
+          row.firm = el.value;
+          row.planId = DEFAULT_FIRMS[el.value].plans[0].id;
+          row.warnings = row.warnings.filter(w=>w!=="firm");
+          renderAggregatePreview();
+          return;
+        }
+        if(field==="planId"){ row.planId = el.value; return; }
+        if(field==="monthIdx"){
+          row.monthIdx = parseInt(el.value,10);
+          row.warnings = row.warnings.filter(w=>w!=="month");
+          return;
+        }
+        if(field==="qtyBought"){ row.qtyBought = parseInt(el.value,10)||0; return; }
+        if(field==="qtyPassed"){ row.qtyPassed = parseInt(el.value,10)||0; return; }
+        if(field==="qtyFunded"){ row.qtyFunded = parseInt(el.value,10)||0; return; }
+        if(field==="netPayout"){ row.netPayout = parseFloat(el.value)||0; return; }
+        if(field==="costEval"){
+          row.costEval = parseFloat(el.value)||0;
+          row.warnings = row.warnings.filter(w=>w!=="cost");
+          el.closest("tr").classList.toggle("import-warn", row.warnings.length>0);
+          return;
+        }
+      });
+    });
+    body.querySelectorAll("[data-agg-skip]").forEach(cb=>{
+      cb.addEventListener("change", ()=>{
+        importAggPreview[parseInt(cb.getAttribute("data-agg-skip"),10)].skip = cb.checked;
+      });
+    });
+  }
+
+  function commitAggregateImport(){
+    const toImport = importAggPreview.filter(r=>!r.skip);
+    if(toImport.length===0){ alert("Nothing to import — every row is marked Skip."); return; }
+    const year = parseInt(document.getElementById("importYear").value,10) || new Date().getFullYear();
+    const totalUnits = toImport.reduce((s,r)=>s+r.qtyBought,0);
+    if(!confirm(`Import ${totalUnits} entr${totalUnits===1?"y":"ies"} across ${toImport.length} month/firm row(s) for ${year}?`)) return;
+    toImport.forEach(r=>{
+      const dateStr = `${year}-${String(r.monthIdx+1).padStart(2,"0")}-01`;
+      for(let i=0;i<r.qtyBought;i++){
+        const status = i<r.qtyFunded ? "funded" : (i<r.qtyPassed ? "passed" : "failed");
+        state.entries.push({
+          id: uid(), date: dateStr, firm: r.firm, planId: r.planId,
+          cost: r.costEval, status, payout: i===0 ? r.netPayout : 0,
+        });
+      }
+    });
+    saveState();
+    resetImportUI();
+    renderAll();
+  }
+
+  /* ----- Transaction mode: one row = one purchase ----- */
   function buildPreviewFromMapping(){
     const dataRows = importParsed.headerRow ? importParsed.rows.slice(1) : importParsed.rows;
     const idxFor = key => importParsed.columns.findIndex(c=>c.mapping===key);
@@ -1117,6 +1342,10 @@
   }
 
   function renderImportPreview(){
+    document.getElementById("importPreviewHead").innerHTML =
+      `<th>Skip</th><th>Date</th><th>Firm</th><th>Plan</th><th>Cost</th><th>Status</th><th>Payout</th><th></th>`;
+    document.getElementById("importPreviewNote").textContent =
+      "Rows highlighted in yellow have a date, firm, or cost we couldn't confidently read — fix them inline or tick \"Skip\" to leave them out.";
     const body = document.getElementById("importPreviewBody");
     const warnCount = importPreview.filter(r=>r.warnings.length>0).length;
     document.getElementById("importWarnCount").textContent = importPreview.length
@@ -1180,12 +1409,14 @@
     const text = document.getElementById("importPasteArea").value;
     const parsed = parsePastedText(text);
     if(!parsed || parsed.rows.length===0){ alert("Paste some rows first."); return; }
+    const aggregate = importMode()==="aggregate";
     const headerDetected = looksLikeHeader(parsed.rows[0]);
     const numCols = Math.max(...parsed.rows.map(r=>r.length));
     const columns = [];
     for(let i=0;i<numCols;i++){
       const headerText = headerDetected ? (parsed.rows[0][i]||"") : "";
-      columns.push({ index:i, header:headerText, mapping: headerDetected ? guessMapping(headerText) : "ignore" });
+      const mapping = headerDetected ? (aggregate ? guessAggregateMapping(headerText) : guessMapping(headerText)) : "ignore";
+      columns.push({ index:i, header:headerText, mapping });
     }
     importParsed = { rows: parsed.rows, headerRow: headerDetected, columns };
     renderImportMapping();
@@ -1197,10 +1428,12 @@
   document.getElementById("importBackBtn").addEventListener("click", resetImportUI);
   document.getElementById("importCancelBtn").addEventListener("click", resetImportUI);
   document.getElementById("importBuildPreviewBtn").addEventListener("click", ()=>{
-    buildPreviewFromMapping();
+    if(importMode()==="aggregate") buildAggregatePreviewFromMapping();
+    else buildPreviewFromMapping();
     importShowStep(3);
   });
   document.getElementById("importCommitBtn").addEventListener("click", ()=>{
+    if(importMode()==="aggregate"){ commitAggregateImport(); return; }
     const toImport = importPreview.filter(r=>!r.skip);
     if(toImport.length===0){ alert("Nothing to import — every row is marked Skip."); return; }
     if(!confirm(`Import ${toImport.length} entr${toImport.length===1?"y":"ies"}? You can edit or delete them afterward from the Entries table.`)) return;
