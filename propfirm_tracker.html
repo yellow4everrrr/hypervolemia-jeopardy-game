@@ -1405,17 +1405,26 @@
     });
   }
 
+  const AGGREGATE_POSITIONAL_ORDER = ["month","firm","costEval","qtyBought","totalSpent","netPayout","ignore","ignore","qtyPassed","qtyFunded","ignore"];
+  const TRANSACTION_POSITIONAL_ORDER = ["date","firm","plan","cost","status","payout"];
+
   document.getElementById("importParseBtn").addEventListener("click", ()=>{
     const text = document.getElementById("importPasteArea").value;
     const parsed = parsePastedText(text);
     if(!parsed || parsed.rows.length===0){ alert("Paste some rows first."); return; }
     const aggregate = importMode()==="aggregate";
     const headerDetected = looksLikeHeader(parsed.rows[0]);
+    const positionalOrder = aggregate ? AGGREGATE_POSITIONAL_ORDER : TRANSACTION_POSITIONAL_ORDER;
     const numCols = Math.max(...parsed.rows.map(r=>r.length));
     const columns = [];
     for(let i=0;i<numCols;i++){
       const headerText = headerDetected ? (parsed.rows[0][i]||"") : "";
-      const mapping = headerDetected ? (aggregate ? guessAggregateMapping(headerText) : guessMapping(headerText)) : "ignore";
+      // No header row to read column names from — fall back to the standard template's column order
+      // (Month, Firm, Cost/Eval, Qty Bought, Total Spent, Net Payout, Net P&L, ROI%, Qty Passed, Qty Funded, Pass Rate%)
+      // rather than leaving every column unmapped.
+      const mapping = headerDetected
+        ? (aggregate ? guessAggregateMapping(headerText) : guessMapping(headerText))
+        : (positionalOrder[i] || "ignore");
       columns.push({ index:i, header:headerText, mapping });
     }
     importParsed = { rows: parsed.rows, headerRow: headerDetected, columns };
