@@ -401,7 +401,37 @@
   };
   const FIRM_ORDER = ["topstep","mff","lucid","tpt","alpha"];
   const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-  const STORAGE_KEY = "propfirmTracker.v1";
+  // v2: pre-seeded with the owner's 2026 spreadsheet data on first load
+  const STORAGE_KEY = "propfirmTracker.v2";
+
+  // 2026 data from the owner's spreadsheet, one row per month+firm.
+  // month is 0-based; payout lands on the first generated entry of the row
+  // so monthly totals match the sheet exactly.
+  const SEED_YEAR = 2026;
+  const SEED_ROWS = [
+    {month:3, firm:"lucid",   planId:"lucid-flex-50k", cost:95,  qty:7,  passed:0, funded:0, payout:3600},
+    {month:4, firm:"lucid",   planId:"lucid-flex-50k", cost:95,  qty:34, passed:0, funded:0, payout:5400},
+    {month:5, firm:"lucid",   planId:"lucid-flex-50k", cost:95,  qty:4,  passed:2, funded:0, payout:9720},
+    {month:5, firm:"mff",     planId:"mff-rapid-50k",  cost:126, qty:9,  passed:0, funded:0, payout:0},
+    {month:5, firm:"topstep", planId:"ts-noact-50k",   cost:101, qty:32, passed:9, funded:0, payout:0},
+    {month:6, firm:"topstep", planId:"ts-noact-50k",   cost:101, qty:15, passed:1, funded:0, payout:3600},
+  ];
+
+  function buildSeedEntries(){
+    const entries = [];
+    SEED_ROWS.forEach((r,ri)=>{
+      const dateStr = `${SEED_YEAR}-${String(r.month+1).padStart(2,"0")}-01`;
+      for(let i=0;i<r.qty;i++){
+        const status = i<r.funded ? "funded" : (i<r.passed ? "passed" : "failed");
+        entries.push({
+          id: `seed26-${ri}-${i}`,
+          date: dateStr, firm: r.firm, planId: r.planId,
+          cost: r.cost, status, payout: i===0 ? r.payout : 0,
+        });
+      }
+    });
+    return entries;
+  }
 
   /* ---------- State ---------- */
   let state = loadState();
@@ -409,14 +439,17 @@
   function defaultState(){
     return { entries: [], priceOverrides: {} };
   }
+  function seededState(){
+    return { entries: buildSeedEntries(), priceOverrides: {} };
+  }
   function loadState(){
     try{
       const raw = localStorage.getItem(STORAGE_KEY);
-      if(!raw) return defaultState();
+      if(!raw) return seededState();
       const parsed = JSON.parse(raw);
-      if(!parsed || !Array.isArray(parsed.entries)) return defaultState();
+      if(!parsed || !Array.isArray(parsed.entries)) return seededState();
       return { entries: parsed.entries, priceOverrides: parsed.priceOverrides || {} };
-    }catch(e){ return defaultState(); }
+    }catch(e){ return seededState(); }
   }
   function saveState(){
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
