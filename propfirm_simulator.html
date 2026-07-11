@@ -183,6 +183,14 @@
 
   <section class="tiles" id="tiles"></section>
 
+  <section class="card" id="evCard">
+    <h2>Card counter math <span class="hint">edge, variance, N&#8320;, risk of ruin, Kelly</span></h2>
+    <div class="tiles" id="evTiles" style="margin-bottom:16px;"></div>
+    <div class="legend" id="evLegend"></div>
+    <div class="chart-scroll"><div id="evChart"></div></div>
+    <div class="tooltip" id="evTip"></div>
+  </section>
+
   <div class="charts-row">
     <section class="card" id="curvesCard">
       <h2>Sample equity curves <span class="hint">first 60 simulated accounts — hover to inspect</span></h2>
@@ -215,6 +223,8 @@
       <div>
         <h3>Distribution percentiles</h3>
         <div class="table-wrap"><table id="pctTable"></table></div>
+        <h3 style="margin-top:18px;">Card counter numbers</h3>
+        <div class="table-wrap"><table id="evTable"></table></div>
       </div>
     </div>
   </section>
@@ -224,6 +234,13 @@
     and trades are independent coin flips at your win rate. Real trading has streaks of correlated losses,
     slippage beyond the modeled fees, and days you break your own rules — so treat the blowup rate here as an
     <em>optimistic floor</em>, not a ceiling.</p>
+    <p><strong>Card counter formulas</strong> (per trade, win W = R·risk − fees, loss L = risk + fees):
+    EV&nbsp;=&nbsp;p·W&nbsp;−&nbsp;q·L. &nbsp;SD&nbsp;=&nbsp;√(p·W²&nbsp;+&nbsp;q·L²&nbsp;−&nbsp;EV²). &nbsp;N₀&nbsp;=&nbsp;(SD/EV)² — the number of
+    trades where cumulative EV first equals one standard deviation, the counter's definition of "the long run".
+    Risk of ruin&nbsp;=&nbsp;e<sup>−2·EV·B/SD²</sup> with bankroll B = the max drawdown; it assumes a fixed bankroll,
+    so a trailing drawdown makes the true number worse (compare it with the simulated blow rate).
+    Kelly fraction&nbsp;=&nbsp;p&nbsp;−&nbsp;q/(W/L), applied to the drawdown as your bankroll — half Kelly is the
+    professional's usual compromise between growth and variance.</p>
     <p>Trailing drawdown trails the balance high-water mark and locks once it reaches the starting balance
     (Topstep-style). "End of day" updates the trail from the end-of-day balance; "every trade" updates it in
     real time (Apex/MFF-style, which is harsher). Educational tool — not financial advice.</p>
@@ -336,12 +353,144 @@
     return res;
   }
 
+  // ---------- card counter math ----------
+  // Same framework counters use for bet sizing: per-round EV and SD, then
+  // N0 = (SD/EV)^2, RoR = e^(-2*EV*B/SD^2), Kelly f* = edge/odds.
+  function evStats(P){
+    const q = 1 - P.p;
+    const W = P.rr * P.risk - P.fees;   // net win
+    const L = P.risk + P.fees;          // net loss (positive)
+    const mu = P.p * W - q * L;                                   // EV per trade
+    const sd = Math.sqrt(Math.max(0, P.p*W*W + q*L*L - mu*mu));   // SD per trade
+    const edge = mu / P.risk;                                     // % advantage per $ risked
+    const n0 = mu > 0 ? Math.pow(sd / mu, 2) : Infinity;          // trades until EV = 1 SD
+    const ror = mu > 0 ? Math.min(1, Math.exp(-2 * mu * P.maxDD / (sd * sd))) : 1;
+    const bEff = W / L;                                           // effective odds after fees
+    const kelly = P.p - q / bEff;                                 // fraction of bankroll
+    const kellyRisk = kelly > 0 ? kelly * P.maxDD : 0;            // bankroll = drawdown cushion
+    return {mu, sd, edge, n0, ror, kelly, kellyRisk};
+  }
+
+  function renderEVTiles(R, S){
+    const P = R.params;
+    const blowRate = R.blown / N_SIM;
+    const sdDay = S.sd * Math.sqrt(P.tradesPerDay);
+    const kellyMult = S.kellyRisk > 0 ? P.risk / S.kellyRisk : null;
+    const tiles = [
+      {label:"EV per trade", value:fmt$(S.mu), cls: S.mu >= 0 ? "good" : "bad",
+        detail:`${fmtPct(S.edge)} player advantage`},
+      {label:"Std dev per trade", value:fmt$(S.sd), cls:"",
+        detail:`${(S.sd / P.risk).toFixed(2)}R — luck per trade`},
+      {label:"EV per day", value:fmt$(S.mu * P.tradesPerDay), cls: S.mu >= 0 ? "good" : "bad",
+        detail:`±${fmt$(sdDay).replace("$","$")} SD per day`},
+      {label:"N₀ — the long run", value: isFinite(S.n0) ? `${Math.ceil(S.n0).toLocaleString()} trades` : "never", cls:"",
+        detail: isFinite(S.n0) ? `≈ ${Math.ceil(S.n0 / P.tradesPerDay).toLocaleString()} days until edge = 1 SD` : "no positive edge to wait for"},
+      {label:"Risk of ruin (formula)", value:fmtPct(S.ror), cls: S.ror > .5 ? "bad" : "",
+        detail:`simulated with trailing DD: ${fmtPct(blowRate)}`},
+      {label:"Kelly-optimal risk", value: S.kellyRisk > 0 ? fmt$(S.kellyRisk) : "$0", cls:"",
+        detail: S.kellyRisk > 0
+          ? `half Kelly ${fmt$(S.kellyRisk/2)} — you bet ${kellyMult.toFixed(1)}× Kelly`
+          : "negative edge: the correct bet is no bet"},
+    ];
+    $("evTiles").innerHTML = tiles.map(t =>
+      `<div class="tile"><div class="label">${t.label}</div><div class="value ${t.cls}">${t.value}</div><div class="detail">${t.detail}</div></div>`
+    ).join("");
+  }
+
+  // The counter's EV graph: expected cumulative P&L with ±1σ√n / ±2σ√n cones.
+  function renderEVCone(R, S){
+    const P = R.params;
+    const N = R.maxTrades;
+    const W = 720, H = 320, m = {t:16, r:56, b:34, l:56};
+    const iw = W - m.l - m.r, ih = H - m.t - m.b;
+
+    const upper2 = n => S.mu*n + 2*S.sd*Math.sqrt(n);
+    const lower2 = n => S.mu*n - 2*S.sd*Math.sqrt(n);
+    let yMax = Math.max(P.target * 1.25, Math.min(upper2(N), P.target * 3));
+    let yMin = Math.min(-P.maxDD * 1.25, Math.max(lower2(N), -P.maxDD * 3));
+    const X = n => m.l + n / N * iw;
+    const Y = v => m.t + (yMax - v) / (yMax - yMin) * ih;
+
+    const host = $("evChart");
+    host.innerHTML = "";
+    const svg = el("svg", {viewBox:`0 0 ${W} ${H}`, style:"min-width:520px;"});
+    host.appendChild(svg);
+
+    const defs = el("defs", {}, svg);
+    const clip = el("clipPath", {id:"evclip"}, defs);
+    el("rect", {x:m.l, y:m.t, width:iw, height:ih}, clip);
+
+    for(const v of niceTicks(yMin, yMax, 6)){
+      el("line", {x1:m.l, x2:W-m.r, y1:Y(v), y2:Y(v), stroke:cssVar("--gridline"), "stroke-width":1}, svg);
+      txt(svg, m.l - 8, Y(v) + 4, fmt$(v), {"text-anchor":"end", "font-variant-numeric":"tabular-nums"});
+    }
+    el("line", {x1:m.l, x2:W-m.r, y1:Y(0), y2:Y(0), stroke:cssVar("--baseline"), "stroke-width":1}, svg);
+    for(const v of niceTicks(0, N, 8)){
+      txt(svg, X(v), H - m.b + 18, Math.round(v).toLocaleString(), {"text-anchor":"middle", "font-variant-numeric":"tabular-nums"});
+    }
+    txt(svg, m.l + iw/2, H - 2, "trades", {"text-anchor":"middle"});
+
+    // thresholds (dashed = genuine thresholds)
+    el("line", {x1:m.l, x2:W-m.r, y1:Y(P.target), y2:Y(P.target), stroke:cssVar("--good"), "stroke-width":1, "stroke-dasharray":"4 3", opacity:.8}, svg);
+    txt(svg, m.l + 6, Y(P.target) - 5, "Target " + fmt$(P.target), {fill:cssVar("--text-secondary")});
+    el("line", {x1:m.l, x2:W-m.r, y1:Y(-P.maxDD), y2:Y(-P.maxDD), stroke:cssVar("--critical"), "stroke-width":1, "stroke-dasharray":"4 3", opacity:.8}, svg);
+    txt(svg, m.l + 6, Y(-P.maxDD) + 13, "Drawdown " + fmt$(-P.maxDD), {fill:cssVar("--text-secondary")});
+
+    const s1 = cssVar("--series-1");
+    const STEPS = 96;
+    const ns = []; for(let i=0; i<=STEPS; i++) ns.push(i / STEPS * N);
+    function band(k){
+      let d = "";
+      ns.forEach((n,i) => { d += (i ? "L" : "M") + X(n).toFixed(1) + " " + Y(S.mu*n + k*S.sd*Math.sqrt(n)).toFixed(1); });
+      for(let i=ns.length-1; i>=0; i--) d += "L" + X(ns[i]).toFixed(1) + " " + Y(S.mu*ns[i] - k*S.sd*Math.sqrt(ns[i])).toFixed(1);
+      return d + "Z";
+    }
+    el("path", {d:band(2), fill:s1, opacity:.08, "clip-path":"url(#evclip)"}, svg);
+    el("path", {d:band(1), fill:s1, opacity:.14, "clip-path":"url(#evclip)"}, svg);
+    let dEV = "";
+    ns.forEach((n,i) => { dEV += (i ? "L" : "M") + X(n).toFixed(1) + " " + Y(S.mu*n).toFixed(1); });
+    el("path", {d:dEV, fill:"none", stroke:s1, "stroke-width":2, "stroke-linejoin":"round", "stroke-linecap":"round", "clip-path":"url(#evclip)"}, svg);
+
+    // N0 marker: where the edge equals one standard deviation
+    if(isFinite(S.n0) && S.n0 <= N){
+      el("line", {x1:X(S.n0), x2:X(S.n0), y1:m.t, y2:m.t+ih, stroke:cssVar("--baseline"), "stroke-width":1}, svg);
+      txt(svg, X(S.n0) + 4, m.t + 12, `N₀ ≈ ${Math.ceil(S.n0).toLocaleString()}`, {fill:cssVar("--text-secondary"), "font-weight":600});
+    }
+    // direct label: EV endpoint
+    const endY = Y(S.mu * N);
+    if(endY > m.t + 8 && endY < m.t + ih - 4){
+      txt(svg, W - m.r + 4, endY + 4, "EV " + fmt$(S.mu*N), {fill:cssVar("--text-secondary"), "font-weight":600});
+    }
+
+    $("evLegend").innerHTML =
+      `<span class="key"><span class="swatch" style="background:var(--series-1)"></span>Expected value</span>` +
+      `<span class="key"><span class="swatch" style="background:var(--series-1); opacity:.35; height:8px;"></span>±1σ (≈68% of outcomes)</span>` +
+      `<span class="key"><span class="swatch" style="background:var(--series-1); opacity:.18; height:8px;"></span>±2σ (≈95% of outcomes)</span>`;
+
+    // crosshair tooltip
+    const tip = $("evTip"), card = $("evCard");
+    const cross = el("line", {x1:0, x2:0, y1:m.t, y2:m.t+ih, stroke:cssVar("--baseline"), "stroke-width":1, opacity:0}, svg);
+    svg.addEventListener("mousemove", evt => {
+      const pt = svg.createSVGPoint(); pt.x = evt.clientX; pt.y = evt.clientY;
+      const c = pt.matrixTransform(svg.getScreenCTM().inverse());
+      if(c.x < m.l || c.x > W - m.r){ cross.setAttribute("opacity", 0); tip.style.display = "none"; return; }
+      const n = Math.max(1, Math.round((c.x - m.l) / iw * N));
+      cross.setAttribute("x1", X(n)); cross.setAttribute("x2", X(n));
+      cross.setAttribute("opacity", .8);
+      const ev = S.mu * n, s = S.sd * Math.sqrt(n);
+      showTip(tip, card, evt,
+        `<div class="t-title">After ${n.toLocaleString()} trades (≈ day ${Math.ceil(n / R.params.tradesPerDay)})</div>` +
+        `<div class="t-row">EV: ${fmt$(ev)}</div>` +
+        `<div class="t-row">68% of outcomes: ${fmt$(ev - s)} to ${fmt$(ev + s)}</div>` +
+        `<div class="t-row">95% of outcomes: ${fmt$(ev - 2*s)} to ${fmt$(ev + 2*s)}</div>`);
+    });
+    svg.addEventListener("mouseleave", () => { cross.setAttribute("opacity", 0); tip.style.display = "none"; });
+  }
+
   // ---------- tiles ----------
   function renderTiles(R){
     const P = R.params;
     const blowRate = R.blown / N_SIM, passRate = R.passed / N_SIM, aliveRate = R.alive / N_SIM;
-    const exp$ = P.p * (P.rr * P.risk) - (1 - P.p) * P.risk - P.fees;
-    const expR = exp$ / P.risk;
     const medBlow = percentile(R.tradesToBlow, .5);
     const attemptsPerPass = passRate > 0 ? 1 / passRate : Infinity;
     const n = P.myAccounts;
@@ -351,12 +500,11 @@
       {label:"Accounts blown", value:fmtPct(blowRate), cls: blowRate > .5 ? "bad" : "", detail:`${R.blown.toLocaleString()} of ${N_SIM.toLocaleString()} simulated`},
       {label:"Accounts passed", value:fmtPct(passRate), cls: passRate >= .5 ? "good" : "", detail:`${R.passed.toLocaleString()} hit the target`},
       {label:"Still undecided", value:fmtPct(aliveRate), cls:"", detail:`ran out of days (${P.maxDays})`},
-      {label:"Expectancy per trade", value:fmt$(exp$), cls: exp$ >= 0 ? "good" : "bad", detail:`${expR >= 0 ? "+" : ""}${expR.toFixed(2)}R after fees`},
       {label:`Of your ${n} account${n>1?"s":""}`, value:`≈ ${expBlownOfMine.toFixed(1)} blown`, cls:"", detail:`P(all ${n} blow) = ${fmtPct(Math.pow(blowRate, n))}`},
       {label:"Attempts per pass", value: isFinite(attemptsPerPass) ? attemptsPerPass.toFixed(1) : "∞", cls:"", detail: isFinite(attemptsPerPass) ? `≈ ${fmt$(attemptsPerPass * P.evalFee)} in eval fees` : "no simulated account passed"},
     ];
     if(medBlow != null){
-      tiles.splice(4, 0, {label:"Median life of a blown acct", value:`${Math.round(medBlow)} trades`, cls:"", detail:`≈ ${Math.ceil(medBlow / P.tradesPerDay)} trading days`});
+      tiles.splice(3, 0, {label:"Median life of a blown acct", value:`${Math.round(medBlow)} trades`, cls:"", detail:`≈ ${Math.ceil(medBlow / P.tradesPerDay)} trading days`});
     }
     $("tiles").innerHTML = tiles.map(t =>
       `<div class="tile"><div class="label">${t.label}</div><div class="value ${t.cls}">${t.value}</div><div class="detail">${t.detail}</div></div>`
@@ -599,6 +747,28 @@
   }
 
   // ---------- tables ----------
+  function renderEVTable(R, S){
+    const P = R.params;
+    const kellyMult = S.kellyRisk > 0 ? (P.risk / S.kellyRisk).toFixed(2) + "× Kelly" : "—";
+    const rows = [
+      ["EV per trade", fmt$(S.mu)],
+      ["SD per trade", fmt$(S.sd)],
+      ["Player advantage (EV ÷ risk)", fmtPct(S.edge)],
+      ["EV per day", fmt$(S.mu * P.tradesPerDay)],
+      ["SD per day", fmt$(S.sd * Math.sqrt(P.tradesPerDay))],
+      ["N₀ (trades until EV = 1 SD)", isFinite(S.n0) ? Math.ceil(S.n0).toLocaleString() : "∞"],
+      ["Risk of ruin — formula", fmtPct(S.ror)],
+      ["Risk of ruin — simulated", fmtPct(R.blown / N_SIM)],
+      ["Kelly fraction of bankroll", S.kelly > 0 ? fmtPct(S.kelly) : "≤ 0%"],
+      ["Full Kelly risk per trade", S.kellyRisk > 0 ? fmt$(S.kellyRisk) : "—"],
+      ["Half Kelly risk per trade", S.kellyRisk > 0 ? fmt$(S.kellyRisk / 2) : "—"],
+      ["Your current bet", `${fmt$(P.risk)} (${kellyMult})`],
+    ];
+    $("evTable").innerHTML =
+      `<thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>` +
+      rows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join("") + `</tbody>`;
+  }
+
   function renderTables(R){
     const P = R.params;
     const rows = [
@@ -642,11 +812,15 @@
     const P = readParams();
     const t0 = performance.now();
     const R = simulate(P, seed);
+    const S = evStats(P);
     renderTiles(R);
+    renderEVTiles(R, S);
+    renderEVCone(R, S);
     renderCurves(R);
     renderPassChart(R);
     renderHist(R);
     renderTables(R);
+    renderEVTable(R, S);
     $("runNote").textContent = `${N_SIM.toLocaleString()} accounts simulated in ${Math.round(performance.now() - t0)} ms`;
   }
 
