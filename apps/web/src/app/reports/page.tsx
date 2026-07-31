@@ -95,13 +95,38 @@ export default function ReportsPage() {
                     <p className="mt-1 font-mono text-2xl tabular-nums text-rose-300">
                       {formatMoney(leakData.total_cost)}
                     </p>
-                    {/* Kept on screen deliberately. The gap between these two numbers is
-                        overlap between detectors, not disagreement. */}
-                    <p className="mt-1 text-[11px] text-slate-500">
-                      Counting each trade once. Adding the detectors&rsquo; individual
-                      estimates would have given {formatMoney(leakData.naive_sum)} — the
-                      same money billed more than once.
-                    </p>
+                    {/* Kept on screen deliberately: the gap between these two numbers is
+                        overlap between detectors, not disagreement.
+
+                        Shown only when there *is* a gap. With a single established leak
+                        the deduplicated total and the naive sum are the same number, and
+                        the sentence then read "adding them would have given -$7,850.04 —
+                        the same money billed more than once" beside a headline of
+                        -$7,850.04. Printing a figure and calling it inflated relative to
+                        itself does not just look wrong, it undermines the deduplication
+                        it was written to explain.
+
+                        Compared **as rendered**, not as raw strings. The two arrive from
+                        a Decimal division and differ at the 25th decimal place —
+                        "-7850.042372881355932203389830" against "...823" — so a string
+                        comparison calls them different and shows the contradiction
+                        anyway. The rule that always holds: never tell a reader two
+                        numbers differ when the screen is showing them the same number. */}
+                    {leakData.naive_sum &&
+                    formatMoney(leakData.naive_sum) !==
+                      formatMoney(leakData.total_cost) ? (
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        Counting each trade once. Adding the detectors&rsquo; individual
+                        estimates would have given {formatMoney(leakData.naive_sum)} —
+                        the same money billed more than once.
+                      </p>
+                    ) : (
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        Counting each trade once. Where established leaks overlap — the
+                        same trade caught by more than one detector — the money is
+                        counted a single time rather than summed per detector.
+                      </p>
+                    )}
                   </>
                 )}
               </section>

@@ -6,10 +6,11 @@ import { keys, request } from "@/lib/api";
 import type {
   Job,
   ModelReport,
-  PatternFinding,
+  PatternListResponse,
   PeriodicReport,
-  TradeSummary,
+  TradeListResponse,
 } from "@/types/evidence";
+import type { PerformanceReport } from "@/types/performance";
 
 /**
  * Data hooks.
@@ -27,10 +28,24 @@ export function useTrades(params: { limit?: number; accountId?: string } = {}) {
 
   return useQuery({
     queryKey: keys.trades(params),
-    queryFn: () =>
-      request<{ trades: TradeSummary[]; count: number }>(
-        `/trades?${search.toString()}`,
-      ),
+    queryFn: () => request<TradeListResponse>(`/trades?${search.toString()}`),
+  });
+}
+
+/**
+ * The full performance report.
+ *
+ * `light=true` skips segmentation, which is the expensive half of the computation and
+ * none of what the dashboard renders. The segment breakdowns belong on a screen that
+ * shows them, fetched when that screen is opened — not paid for on every dashboard load.
+ */
+export function usePerformance(accountId?: string) {
+  const search = new URLSearchParams({ light: "true" });
+  if (accountId) search.set("account_id", accountId);
+
+  return useQuery({
+    queryKey: keys.analytics(accountId),
+    queryFn: () => request<PerformanceReport>(`/analytics/performance?${search}`),
   });
 }
 
@@ -38,7 +53,7 @@ export function usePatterns(accountId?: string) {
   return useQuery({
     queryKey: keys.patterns(accountId),
     queryFn: () =>
-      request<{ behaviours: PatternFinding[]; notes: string[] }>(
+      request<PatternListResponse>(
         `/patterns${accountId ? `?account_id=${accountId}` : ""}`,
       ),
   });

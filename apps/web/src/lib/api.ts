@@ -59,6 +59,13 @@ export async function request<T>(
   if (body !== undefined) headers["Content-Type"] = "application/json";
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
+  // Mirrors the backend's `auth_dev_bypass`, which `get_settings` refuses to enable in
+  // production. Lets the app run end to end locally without provisioning Clerk; sent to
+  // a deployment with the bypass off it is simply ignored, and the request fails
+  // authentication exactly as an unauthenticated one should.
+  const devUser = process.env.NEXT_PUBLIC_DEV_USER;
+  if (devUser && !token) headers["X-Debug-User"] = devUser;
+
   const response = await fetch(`${API_BASE}${path}`, {
     method,
     headers,

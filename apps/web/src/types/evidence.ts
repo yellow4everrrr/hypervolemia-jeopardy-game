@@ -59,9 +59,21 @@ export interface Estimate {
 export interface MetricChange {
   key: string;
   label: string;
+  /** Exact, full precision. For computing with — never for rendering. */
   current: string | null;
   previous: string | null;
   difference: string | null;
+  /**
+   * The same values quantised for a human, and the unit they are quantised to.
+   *
+   * These exist because `current` is the mean of a per-trade quantity and carries every
+   * digit of the division: a monthly report displayed `178.88686131386861313868613`. The
+   * backend rounds at the last moment and sends both, so the UI never has to choose
+   * between an unreadable number and a lossy one.
+   */
+  unit?: "currency" | "ratio" | "r" | "seconds" | "count";
+  display_current?: string;
+  display_previous?: string;
   current_sample: number;
   previous_sample: number;
   is_established: boolean;
@@ -72,20 +84,47 @@ export interface MetricChange {
   effect_size?: string | null;
 }
 
-/** A behavioural or cluster pattern. Never a finding until `is_actionable`. */
-export interface PatternFinding {
+/**
+ * A behavioural or cluster pattern, as `GET /patterns` returns it from storage.
+ *
+ * Transcribed from the router's projection of `detected_patterns`, not from the richer
+ * in-memory `BehaviourFinding` the scan produces. The two differ, and an earlier version
+ * of this file described the latter: `affected` for `sample_size`, `estimated_cost` for
+ * `estimated_annual_impact`, `is_actionable` for `is_significant`. Reading a property
+ * that does not exist off a JSON object is `undefined` rather than an error, so those
+ * rendered as blanks and one of them — `data.behaviours.filter` on a payload whose key is
+ * `items` — took the page down entirely.
+ *
+ * `p_value` is **already FDR-adjusted** where the scan produced an adjustment; the
+ * storage layer collapses the two into one column (`adjusted_p_value or p_value`), so
+ * there is no separate raw p-value to show and none is invented here.
+ *
+ * `estimated_annual_impact` is signed: negative is money the behaviour is associated with
+ * losing. It is the observed difference scaled by how much of a year the sample covers —
+ * an extrapolation of what already happened, never a forecast — and `null` below a month
+ * of history rather than scaled up from too little.
+ */
+export interface StoredPattern {
+  id: string;
   kind: string;
   label: string;
   description: string;
   polarity: "leak" | "edge";
-  affected: number;
-  unaffected: number;
-  unit: "currency" | "r_multiple" | "seconds";
-  difference: string | null;
-  estimated_cost: string | null;
-  reliability: Reliability;
-  is_actionable: boolean;
-  adjusted_p_value?: string | null;
+  sample_size: number;
+  effect_size: string | null;
+  p_value: string | null;
+  confidence_low: string | null;
+  confidence_high: string | null;
+  is_significant: boolean;
+  estimated_annual_impact: string | null;
+  detail: Record<string, unknown>;
+  engine_version: number;
+}
+
+/** The stored scan, plus the note explaining why failures are included. */
+export interface PatternListResponse {
+  items: StoredPattern[];
+  note: string;
 }
 
 /** Deduplicated leak cost. `naive_sum` is carried so the overlap stays visible. */
@@ -174,20 +213,45 @@ export interface PeriodicReport {
   notes: string[];
 }
 
+/**
+ * The blotter row, transcribed from `app.interfaces.http.schemas.trades.TradeSummary`.
+ *
+ * Field names match the API exactly. An earlier version of this file guessed at them —
+ * `quantity` for `quantity_opened`, `r_multiple` for `realized_r`, an
+ * `instrument_symbol` that the endpoint does not return — and every one of those
+ * rendered as a silent blank rather than an error, because reading a missing property
+ * off a JSON object is `undefined`, not a crash.
+ */
 export interface TradeSummary {
   id: string;
+  account_id: string;
+  instrument_id: string;
+  direction: "long" | "short";
+  status: string;
   opened_at: string;
   closed_at: string | null;
-  direction: "long" | "short";
-  instrument_symbol: string | null;
-  quantity: string;
-  net_pnl: string;
-  r_multiple: string | null;
   duration_seconds: number | null;
+  quantity_opened: string;
+  quantity_closed: string;
+  avg_entry_price: string | null;
+  avg_exit_price: string | null;
+  gross_pnl: string;
+  commission: string;
+  fees: string;
+  net_pnl: string;
+  realized_r: string | null;
   session_date: string | null;
-  strategy: string | null;
-  setup: string | null;
-  compliance_score: string | null;
+  session_segment: string | null;
+  entry_hour: number | null;
+  entry_weekday: number | null;
+}
+
+/** Paginated list. There is deliberately no total: see the schema's own note. */
+export interface TradeListResponse {
+  items: TradeSummary[];
+  limit: number;
+  offset: number;
+  has_more: boolean;
 }
 
 export interface Job {

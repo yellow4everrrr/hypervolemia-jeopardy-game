@@ -41,7 +41,7 @@ def test_the_definition_publishes_the_compared_metrics(client: TestClient) -> No
 
     assert len(payload["compared_metrics"]) == len(COMPARED_METRICS)
     assert {item["key"] for item in payload["compared_metrics"]} == {
-        key for key, _, _ in COMPARED_METRICS
+        metric.key for metric in COMPARED_METRICS
     }
 
 

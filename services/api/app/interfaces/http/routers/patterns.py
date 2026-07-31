@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from app.analytics.discovery import DiscoveryConfig
 from app.application.use_cases.detect_patterns import DetectPatterns
 from app.core.errors import ValidationError
+from app.infrastructure.db.models.ai import DetectedPattern
 from app.infrastructure.db.repositories.patterns import SqlAlchemyPatternRepository
 from app.infrastructure.db.uow import SqlAlchemyUnitOfWork
 from app.interfaces.http.deps import CurrentUserDep, SessionDep
@@ -92,25 +93,7 @@ async def list_patterns(
     rows = await repository.list_patterns(user.id, significant_only=significant_only)
 
     return {
-        "items": [
-            {
-                "id": str(row.id),
-                "kind": row.pattern_kind,
-                "label": row.label,
-                "description": row.description,
-                "polarity": row.polarity,
-                "sample_size": row.sample_size,
-                "effect_size": _s(row.effect_size),
-                "p_value": _s(row.p_value),
-                "confidence_low": _s(row.confidence_low),
-                "confidence_high": _s(row.confidence_high),
-                "is_significant": row.is_significant,
-                "estimated_annual_impact": _s(row.estimated_annual_impact),
-                "detail": row.detail,
-                "engine_version": row.engine_version,
-            }
-            for row in rows
-        ],
+        "items": [serialise_pattern(row) for row in rows],
         "note": (
             "Patterns that did not clear the significance threshold are included and "
             "marked is_significant = false. They were tested and not established, which "
@@ -143,6 +126,38 @@ async def apply_setup(
     )
     await SqlAlchemyUnitOfWork(session).commit()
     return {"setup_name": payload.setup_name, "trades_labelled": updated}
+
+
+def serialise_pattern(row: DetectedPattern) -> dict[str, Any]:
+    """Project a stored pattern onto the wire.
+
+    A named function rather than a dict literal inside the handler so the key set is
+    reachable from a test. The frontend transcribes these names by hand into
+    ``StoredPattern``, and a mismatch does not raise on either side — reading an absent
+    property off a JSON object is ``undefined`` in JavaScript, so a renamed field here
+    becomes a blank cell there rather than an error. ``tests/api/test_wire_contracts.py``
+    compares the two.
+
+    ``p_value`` is the FDR-adjusted value where the scan produced one, falling back to the
+    raw p-value only for a test that was not part of a corrected family. The two are one
+    column deliberately: storing both invites a caller to quote whichever is smaller.
+    """
+    return {
+        "id": str(row.id),
+        "kind": row.pattern_kind,
+        "label": row.label,
+        "description": row.description,
+        "polarity": row.polarity,
+        "sample_size": row.sample_size,
+        "effect_size": _s(row.effect_size),
+        "p_value": _s(row.p_value),
+        "confidence_low": _s(row.confidence_low),
+        "confidence_high": _s(row.confidence_high),
+        "is_significant": row.is_significant,
+        "estimated_annual_impact": _s(row.estimated_annual_impact),
+        "detail": row.detail,
+        "engine_version": row.engine_version,
+    }
 
 
 def _s(value: Decimal | None) -> str | None:

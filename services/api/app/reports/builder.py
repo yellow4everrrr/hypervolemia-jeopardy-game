@@ -104,10 +104,16 @@ class BuiltReport:
         performance = self.section("performance")
         if performance is None or not performance.is_present:
             return f"{self.trades} trades over {self.sessions} sessions in {self.period.label}."
+        # Quantised, because `net_pnl` comes off a NUMERIC(20,8) column and formats as
+        # "24507.50000000". This sentence is stored on the report row and shown as the
+        # report's title, so the trailing zeros were the first thing a trader read.
         net = performance.payload.get("net_pnl")
+        amount = (
+            Decimal(str(net)).quantize(Decimal("0.01")) if net is not None else "an unknown amount"
+        )
         return (
             f"{self.trades} trades over {self.sessions} sessions in "
-            f"{self.period.label}, netting {net}."
+            f"{self.period.label}, netting {amount}."
         )
 
     def to_payload(self) -> dict[str, Any]:

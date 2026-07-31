@@ -152,7 +152,8 @@ async def definition() -> dict[str, Any]:
             for report_type, minimum in MIN_SESSIONS_FOR_CONCLUSIONS.items()
         },
         "compared_metrics": [
-            {"key": key, "label": label} for key, label, _ in COMPARED_METRICS
+            {"key": metric.key, "label": metric.label, "unit": metric.unit}
+            for metric in COMPARED_METRICS
         ],
         "notes": [
             "A period-over-period change is reported as a change only when it survives "

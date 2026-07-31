@@ -36,8 +36,8 @@ import type {
   Estimate,
   MetricChange,
   ModelReport,
-  PatternFinding,
   Reliability,
+  StoredPattern,
 } from "@/types/evidence";
 
 type Unit = "currency" | "ratio" | "percent" | "r";
@@ -171,13 +171,18 @@ export function Change({ change }: { change: MetricChange }) {
     <div className="flex flex-col gap-1 border-b border-slate-800 py-3 last:border-b-0">
       <div className="flex items-baseline justify-between gap-3">
         <span className="text-sm text-slate-300">{change.label}</span>
+        {/* `display_current`, not `current`. The exact value is the mean of a per-trade
+            quantity and carries every digit the division produced: this rendered as
+            "178.88686131386861313868613" on a monthly report. Both fields are on the
+            payload — the exact one for anything that computes, the rounded one for
+            anything a person reads — and this is the second case. */}
         <span
           className={`font-mono text-sm tabular-nums ${DIRECTION_TONE[change.direction]}`}
         >
           <span aria-hidden className="mr-1">
             {DIRECTION_GLYPH[change.direction]}
           </span>
-          {change.current ?? NOT_AVAILABLE}
+          {change.display_current ?? change.current ?? NOT_AVAILABLE}
         </span>
       </div>
 
@@ -205,8 +210,9 @@ export function Change({ change }: { change: MetricChange }) {
  * failures would make recurrence unfalsifiable — but it is labelled *examined*, never
  * *found*, and never carries a cost figure.
  */
-export function Finding({ finding }: { finding: PatternFinding }) {
-  const established = finding.is_actionable;
+export function Finding({ finding }: { finding: StoredPattern }) {
+  const established = finding.is_significant;
+  const impact = finding.estimated_annual_impact;
 
   return (
     <article
@@ -238,24 +244,50 @@ export function Finding({ finding }: { finding: PatternFinding }) {
       <dl className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
         <div className="flex gap-1">
           <dt>affected</dt>
-          <dd className="font-mono text-slate-400">{finding.affected}</dd>
+          <dd className="font-mono text-slate-400">{finding.sample_size}</dd>
         </div>
-        {/* A cost is attached only to an established leak. Showing one for a pattern that
-            failed its test would put the loudest coincidence in the scan on the screen
-            beside a dollar figure. */}
-        {established && finding.unit === "currency" && finding.estimated_cost ? (
+        {/* A money figure is attached only to an established pattern. Showing one for a
+            pattern that failed its test would put the loudest coincidence in the scan on
+            the screen beside a dollar amount, which is the one thing a reader remembers.
+            The wording says "over a year at this rate" because the backend produced it by
+            scaling the observed difference by the fraction of a year the sample covers —
+            it is arithmetic on the past, and calling it a projection would oversell it. */}
+        {established && impact ? (
           <div className="flex gap-1">
-            <dt>associated with</dt>
-            <dd className="font-mono text-rose-300">
-              {formatMoney(finding.estimated_cost)}
+            <dt>over a year at this rate</dt>
+            <dd
+              className={`font-mono ${
+                impact.startsWith("-") ? "text-rose-300" : "text-emerald-300"
+              }`}
+            >
+              {formatMoney(impact)}
             </dd>
           </div>
         ) : null}
-        {finding.adjusted_p_value ? (
+        {/* Already FDR-adjusted upstream where an adjustment existed; see StoredPattern. */}
+        {finding.p_value ? (
           <div className="flex gap-1">
             <dt>adjusted p</dt>
             <dd className="font-mono text-slate-400">
-              {formatNumber(finding.adjusted_p_value, 3)}
+              {formatNumber(finding.p_value, 3)}
+            </dd>
+          </div>
+        ) : null}
+        {/* Named precisely, because the obvious short label is wrong. This interval is on
+            the expectancy of the trades the behaviour was *present* on — not on the
+            difference the test established. The two routinely disagree in a way that
+            looks like a contradiction if the label does not say which is which: a leak
+            can be significant because late trades are worse than early ones while the
+            late trades' own expectancy still straddles zero. Labelled "expectancy", that
+            reads as the finding undermining itself. */}
+        {finding.confidence_low && finding.confidence_high ? (
+          <div className="flex gap-1">
+            <dt title="the expectancy of the affected trades, not of the difference">
+              expectancy when present
+            </dt>
+            <dd className="font-mono text-slate-400">
+              {formatMoney(finding.confidence_low)} to{" "}
+              {formatMoney(finding.confidence_high)}
             </dd>
           </div>
         ) : null}

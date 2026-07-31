@@ -15,8 +15,8 @@ import { usePatterns } from "@/lib/hooks";
 export default function PatternsPage() {
   const { data, isLoading, error } = usePatterns();
 
-  const established = data?.behaviours.filter((item) => item.is_actionable) ?? [];
-  const examined = data?.behaviours.filter((item) => !item.is_actionable) ?? [];
+  const established = data?.items.filter((item) => item.is_significant) ?? [];
+  const examined = data?.items.filter((item) => !item.is_significant) ?? [];
 
   return (
     <>
@@ -46,7 +46,7 @@ export default function PatternsPage() {
               ) : (
                 <div className="grid gap-3 lg:grid-cols-2">
                   {established.map((finding) => (
-                    <Finding key={finding.kind} finding={finding} />
+                    <Finding key={finding.id} finding={finding} />
                   ))}
                 </div>
               )}
@@ -58,10 +58,26 @@ export default function PatternsPage() {
               </h2>
               <div className="grid gap-3 lg:grid-cols-2">
                 {examined.map((finding) => (
-                  <Finding key={finding.kind} finding={finding} />
+                  <Finding key={finding.id} finding={finding} />
                 ))}
               </div>
             </section>
+
+            {/* The backend's own explanation of why the failures are on the screen.
+                Rendered rather than paraphrased, so the reason a page full of "examined
+                and not established" is the correct output comes from the engine that
+                decided it. */}
+            {data.items.length > 0 ? (
+              <p className="max-w-3xl text-[11px] leading-relaxed text-slate-600">
+                {data.note}
+              </p>
+            ) : (
+              <p className="text-sm text-slate-500">
+                No scan has been run yet. A scan is an explicit action rather than
+                something a page triggers on render — it runs a permutation test per
+                detector and a null-reference battery for the clustering.
+              </p>
+            )}
           </>
         ) : null}
       </div>

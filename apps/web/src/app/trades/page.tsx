@@ -3,10 +3,11 @@
 import { PageHeader } from "@/components/shell";
 import { ApiError } from "@/lib/api";
 import {
-  NOT_AVAILABLE,
   formatDate,
   formatDuration,
   formatMoney,
+  formatPrice,
+  formatQuantity,
   formatR,
   formatTime,
   pnlTone,
@@ -44,7 +45,7 @@ function Row({ trade }: { trade: TradeSummary }) {
         {formatTime(trade.opened_at)}
       </td>
       <td className="px-3 py-1.5 font-mono text-xs text-slate-300">
-        {trade.instrument_symbol ?? NOT_AVAILABLE}
+        {formatPrice(trade.avg_entry_price)}
       </td>
       <td className="px-3 py-1.5">
         <span
@@ -56,7 +57,7 @@ function Row({ trade }: { trade: TradeSummary }) {
         </span>
       </td>
       <td className="px-3 py-1.5 text-right font-mono text-xs tabular-nums text-slate-400">
-        {trade.quantity}
+        {formatQuantity(trade.quantity_opened)}
       </td>
       <td className={`px-3 py-1.5 text-right font-mono text-xs tabular-nums ${tone}`}>
         {formatMoney(trade.net_pnl)}
@@ -64,19 +65,19 @@ function Row({ trade }: { trade: TradeSummary }) {
       {/* No stop recorded means no R multiple. A zero here would invent a break-even
           trade that never happened. */}
       <td className="px-3 py-1.5 text-right font-mono text-xs tabular-nums text-slate-400">
-        {trade.r_multiple === null ? (
+        {trade.realized_r === null ? (
           <span className="text-slate-600" title="no stop was recorded for this trade">
             —
           </span>
         ) : (
-          formatR(trade.r_multiple)
+          formatR(trade.realized_r)
         )}
       </td>
       <td className="px-3 py-1.5 text-right font-mono text-xs tabular-nums text-slate-500">
         {formatDuration(trade.duration_seconds)}
       </td>
       <td className="px-3 py-1.5 font-mono text-xs text-slate-500">
-        {trade.setup ?? trade.strategy ?? ""}
+        {trade.session_segment ?? ""}
       </td>
     </tr>
   );
@@ -103,27 +104,27 @@ export default function TradesPage() {
           <p className="text-sm text-slate-500">Loading…</p>
         ) : null}
 
-        {data && data.trades.length === 0 ? (
+        {data && data.items.length === 0 ? (
           <p className="text-sm text-slate-500">
             No trades yet. Link a broker account and they will be imported and
             reconstructed automatically.
           </p>
         ) : null}
 
-        {data && data.trades.length > 0 ? (
+        {data && data.items.length > 0 ? (
           <table className="w-full border-collapse">
             <thead>
               <tr className="border-b border-slate-700 text-left">
                 {[
-                  "Session",
+                  "Date",
                   "Opened",
-                  "Symbol",
+                  "Entry",
                   "Side",
                   "Qty",
                   "Net P&L",
                   "R",
                   "Held",
-                  "Setup",
+                  "Segment",
                 ].map((heading, index) => (
                   <th
                     key={heading}
@@ -137,7 +138,7 @@ export default function TradesPage() {
               </tr>
             </thead>
             <tbody>
-              {data.trades.map((trade) => (
+              {data.items.map((trade) => (
                 <Row key={trade.id} trade={trade} />
               ))}
             </tbody>

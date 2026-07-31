@@ -44,6 +44,50 @@ from app.analytics.significance import (
 from app.analytics.types import MIN_SAMPLE, TradeRecord
 from app.reports.periods import Period
 
+
+@dataclass(frozen=True, slots=True)
+class ComparedMetric:
+    """One metric the period comparison tests, and how to say it out loud.
+
+    ``unit`` exists because the mean of a per-trade value carries the full precision of
+    the division that produced it, and every consumer of these numbers was printing that
+    precision verbatim. A monthly report read "average P&L per trade was
+    178.88686131386861313868613 against 144.43359375" — arithmetically exact, and
+    unreadable. Worse, the sentence is not only rendered: it is stored on the report row
+    and handed to the AI layer as ground truth, so the noise propagated to everything
+    downstream of it.
+
+    Rounding for *display* is not the same as rounding the computation. The comparison,
+    the permutation test and the stored value all keep full precision; only the sentence
+    and the payload's display fields are quantised, at the last possible moment.
+    """
+
+    key: str
+    label: str
+    extract: Callable[[TradeRecord], Decimal | None]
+    unit: str
+
+
+#: How many decimal places each unit is worth reading to, and what to append. Seconds are
+#: whole because a tenth of a second of average holding time is not a fact about trading.
+_DISPLAY: dict[str, tuple[int, str]] = {
+    "currency": (2, ""),
+    "ratio": (4, ""),
+    "r": (3, "R"),
+    "seconds": (0, "s"),
+    "count": (2, ""),
+}
+
+
+def display_value(value: Decimal | None, unit: str) -> str:
+    """A metric as a person would read it. Never used as an input to anything."""
+    if value is None:
+        return "not available"
+    places, suffix = _DISPLAY.get(unit, (2, ""))
+    quantum = Decimal(1).scaleb(-places)
+    return f"{value.quantize(quantum)}{suffix}"
+
+
 #: The metrics compared across periods. Short deliberately — every addition raises the
 #: bar for all the others through the family-wide correction, and a report that compares
 #: thirty metrics establishes none of them.
@@ -53,18 +97,30 @@ from app.reports.periods import Period
 #: whether the two sets of per-trade values came from one distribution. A metric that is
 #: not a mean of per-trade values — profit factor, max drawdown, Sharpe — cannot be
 #: tested this way and is deliberately absent rather than tested wrongly.
-COMPARED_METRICS: tuple[tuple[str, str, Callable[[TradeRecord], Decimal | None]], ...] = (
-    ("net_pnl_per_trade", "average P&L per trade", lambda trade: trade.net_pnl),
-    ("win_rate", "win rate", lambda trade: Decimal(1) if trade.is_winner else Decimal(0)),
-    ("r_multiple", "average R multiple", lambda trade: trade.r_multiple),
-    (
+COMPARED_METRICS: tuple[ComparedMetric, ...] = (
+    ComparedMetric(
+        "net_pnl_per_trade", "average P&L per trade", lambda trade: trade.net_pnl,
+        unit="currency",
+    ),
+    ComparedMetric(
+        "win_rate", "win rate",
+        lambda trade: Decimal(1) if trade.is_winner else Decimal(0),
+        unit="ratio",
+    ),
+    ComparedMetric(
+        "r_multiple", "average R multiple", lambda trade: trade.r_multiple, unit="r"
+    ),
+    ComparedMetric(
         "duration_seconds",
         "average holding time",
         lambda trade: Decimal(trade.duration_seconds)
         if trade.duration_seconds is not None
         else None,
+        unit="seconds",
     ),
-    ("quantity", "average position size", lambda trade: trade.quantity),
+    ComparedMetric(
+        "quantity", "average position size", lambda trade: trade.quantity, unit="count"
+    ),
 )
 
 
@@ -86,6 +142,17 @@ class MetricChange:
     current_sample: int
     previous_sample: int
     comparison: ComparisonResult | None
+    #: Display unit, carried from :data:`COMPARED_METRICS`. Affects how the value is
+    #: written, never how it is computed or compared.
+    unit: str = "currency"
+
+    @property
+    def display_current(self) -> str:
+        return display_value(self.current, self.unit)
+
+    @property
+    def display_previous(self) -> str:
+        return display_value(self.previous, self.unit)
 
     @property
     def difference(self) -> Decimal | None:
@@ -121,19 +188,22 @@ class MetricChange:
             movement = "higher" if (self.difference or Decimal(0)) > 0 else "lower"
             return (
                 f"{self.label} was {movement} than the previous period "
-                f"({self.current} against {self.previous}), by more than chance explains "
-                f"across {self.current_sample} and {self.previous_sample} trades"
+                f"({self.display_current} against {self.display_previous}), by more than "
+                f"chance explains across {self.current_sample} and "
+                f"{self.previous_sample} trades"
             )
 
         if self.comparison is None:
             return (
-                f"{self.label} was {self.current} against {self.previous}, but with "
+                f"{self.label} was {self.display_current} against "
+                f"{self.display_previous}, but with "
                 f"{self.current_sample} and {self.previous_sample} trades there is not "
                 "enough data to compare the two"
             )
 
         return (
-            f"{self.label} was {self.current} against {self.previous} — with "
+            f"{self.label} was {self.display_current} against "
+            f"{self.display_previous} — with "
             f"{self.current_sample} and {self.previous_sample} trades, chance produces a "
             "gap that size often enough that this is not a change"
         )
@@ -142,9 +212,16 @@ class MetricChange:
         payload: dict[str, Any] = {
             "key": self.key,
             "label": self.label,
+            # Full precision is preserved alongside the rounded form rather than
+            # replaced by it: the exact value is what a later computation would need, and
+            # the display value is what a person should read. A UI given only the first
+            # prints 26 digits; given only the second it cannot recompute anything.
             "current": _s(self.current),
             "previous": _s(self.previous),
             "difference": _s(self.difference),
+            "unit": self.unit,
+            "display_current": self.display_current,
+            "display_previous": self.display_previous,
             "current_sample": self.current_sample,
             "previous_sample": self.previous_sample,
             "is_established": self.is_established,
@@ -202,7 +279,8 @@ def compare_periods(
     #: back onto the metric that earned them.
     tested_positions: list[int] = []
 
-    for key, label, extract in COMPARED_METRICS:
+    for metric in COMPARED_METRICS:
+        extract = metric.extract
         current_values = [value for value in map(extract, current_trades) if value is not None]
         previous_values = [value for value in map(extract, previous_trades) if value is not None]
 
@@ -221,8 +299,8 @@ def compare_periods(
 
         changes.append(
             MetricChange(
-                key=key,
-                label=label,
+                key=metric.key,
+                label=metric.label,
                 current=comparison.mean_a
                 if comparison is not None
                 else _mean_or_none(current_values),
@@ -232,6 +310,7 @@ def compare_periods(
                 current_sample=len(current_values),
                 previous_sample=len(previous_values),
                 comparison=comparison,
+                unit=metric.unit,
             )
         )
 

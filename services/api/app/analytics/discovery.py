@@ -111,9 +111,17 @@ class ClusterFinding:
 
     @property
     def label(self) -> str:
+        """A description a trader can act on, assembled from the retained traits.
+
+        Deliberately a list rather than a sentence. The trait phrases come from the
+        feature set and are a mix of grammatical shapes — "held longer than usual" is a
+        past participle, "gave back most of the available move" is a finite verb, "long"
+        is an adjective — so any connecting phrase is wrong for some of them. An earlier
+        version read "Trades that are gave back most of the available move".
+        """
         if not self.traits:
             return f"Cluster {self.cluster + 1}"
-        return "Trades that are " + ", ".join(self.traits)
+        return "Trades: " + ", ".join(self.traits)
 
     def to_payload(self) -> dict[str, Any]:
         return {

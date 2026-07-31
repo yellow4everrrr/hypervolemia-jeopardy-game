@@ -22,7 +22,12 @@ import pytest
 from app.analytics.types import Direction, TradeRecord
 from app.core.ids import uuid7
 from app.domain.common.enums import ReportType
-from app.reports.comparison import COMPARED_METRICS, compare_periods
+from app.reports.comparison import (
+    COMPARED_METRICS,
+    MetricChange,
+    compare_periods,
+    display_value,
+)
 from app.reports.periods import period_containing, previous
 
 BASE = datetime(2026, 4, 1, 14, 30, tzinfo=UTC)
@@ -203,3 +208,70 @@ class TestThinPeriods:
 
         assert payload["established_count"] == 0
         assert "permutation test" in payload["interpretation"]
+
+
+def test_the_narrative_does_not_print_full_decimal_precision() -> None:
+    """A mean of per-trade values carries every digit of the division that made it.
+
+    This shipped: a monthly report read "average P&L per trade was
+    178.88686131386861313868613 against 144.43359375". The sentence is not only rendered
+    on screen — it is stored on the report row and handed to the AI layer as the ground
+    truth it is forbidden to restate numbers without — so the noise propagated into
+    everything downstream.
+    """
+    change = MetricChange(
+        key="net_pnl_per_trade",
+        label="average P&L per trade",
+        current=Decimal("178.88686131386861313868613"),
+        previous=Decimal("144.43359375"),
+        current_sample=137,
+        previous_sample=128,
+        comparison=None,
+        unit="currency",
+    )
+
+    narrative = change.narrate()
+
+    assert "178.89" in narrative
+    assert "144.43" in narrative
+    assert "178.88686131386861313868613" not in narrative
+    assert "144.43359375" not in narrative
+
+
+def test_the_payload_keeps_the_exact_value_beside_the_rounded_one() -> None:
+    """Rounding for display must not become rounding of the number.
+
+    A caller that needs to recompute — a chart, a later comparison, an export — needs the
+    exact value. Replacing it with the display string would fix the rendering by
+    destroying the data, which is the wrong trade in a system built on exact arithmetic.
+    """
+    exact = Decimal("178.88686131386861313868613")
+    change = MetricChange(
+        key="net_pnl_per_trade",
+        label="average P&L per trade",
+        current=exact,
+        previous=Decimal("144.43359375"),
+        current_sample=137,
+        previous_sample=128,
+        comparison=None,
+        unit="currency",
+    )
+
+    payload = change.to_payload()
+
+    assert payload["current"] == str(exact)
+    assert payload["display_current"] == "178.89"
+    assert payload["unit"] == "currency"
+
+
+def test_each_unit_rounds_to_a_precision_worth_reading() -> None:
+    """Seconds whole, R to three places, ratios to four.
+
+    A tenth of a second of average holding time is not a fact about trading, and a win
+    rate rounded to two places loses the difference between 51.2% and 51.4% that the
+    comparison is actually about.
+    """
+    assert display_value(Decimal("1252.912408759124087"), "seconds") == "1253s"
+    assert display_value(Decimal("0.5109489051094890"), "ratio") == "0.5109"
+    assert display_value(Decimal("0.4105109489051094"), "r") == "0.411R"
+    assert display_value(None, "currency") == "not available"

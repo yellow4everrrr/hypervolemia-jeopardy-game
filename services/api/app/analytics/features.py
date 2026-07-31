@@ -80,18 +80,6 @@ def _direction(trade: TradeRecord) -> Decimal:
     return Decimal(1) if trade.direction.value == "long" else Decimal(0)
 
 
-def _efficiency(trade: TradeRecord) -> Decimal | None:
-    """How much of the favourable excursion was actually captured.
-
-    Near 1 means exits near the best available price; near 0 means the trade went the
-    right way and gave it all back. This is the single most diagnostic feature in the
-    set, and it exists only because milestone 4 supplies excursions.
-    """
-    if trade.mfe_r is None or trade.r_multiple is None or trade.mfe_r <= 0:
-        return None
-    return trade.r_multiple / trade.mfe_r
-
-
 #: The feature space. Deliberately small: every added dimension dilutes Euclidean
 #: distance (the curse of dimensionality is not a slogan at n = 500), and every feature
 #: that is frequently missing costs trades from the run.
@@ -145,19 +133,31 @@ FEATURES: tuple[Feature, ...] = (
         higher_is="offered a large move in your favour",
         lower_is="never moved far in your favour",
     ),
-    Feature(
-        name="capture_efficiency",
-        description="realized R as a fraction of the best R available",
-        extract=_efficiency,
-        higher_is="captured most of the available move",
-        lower_is="gave back most of the available move",
-    ),
 )
 
 #: Outcome is deliberately **not** a feature. Clustering on P&L and then testing whether
 #: the clusters differ in P&L is circular — it always finds a "losing pattern", because
 #: it built one. Clusters are formed from what the trade *was*; the test asks whether
 #: those groups happened to perform differently.
+#:
+#: **This tuple used to be the whole of the enforcement, and it enforced nothing.** It is
+#: a list of names, and the rule was broken by a feature that named none of them:
+#: ``capture_efficiency``, defined as ``r_multiple / mfe_r`` and guarded by ``mfe_r > 0``.
+#: That guard makes the sign of the feature identical to the sign of ``r_multiple`` —
+#: measured on a real 350-trade history, it agreed with the win/loss label 350 times out
+#: of 350. The feature *was* the outcome, rescaled.
+#:
+#: What it produced was not subtle. The clustering split the sample almost exactly into
+#: winners and losers and labelled them "gave back most of the available move" and
+#: "captured most of the available move"; the permutation test then confirmed, correctly
+#: and uselessly, that the two groups had different P&L. Both cleared FDR correction at
+#: p = 0.002 and reached the Patterns page as established findings carrying annual impacts
+#: of -$817,766 and +$545,178. Removing the feature drops the run from two significant
+#: clusters to **no clusters at all** — which is the honest answer for this history.
+#:
+#: The rule is now enforced by :mod:`tests.unit.analytics.test_feature_leakage`, which
+#: varies each trade's outcome with every other field held fixed and fails any feature
+#: whose value moves. A name-based list cannot catch arithmetic; a behavioural probe can.
 EXCLUDED_FROM_CLUSTERING = ("net_pnl", "r_multiple", "gross_pnl")
 
 

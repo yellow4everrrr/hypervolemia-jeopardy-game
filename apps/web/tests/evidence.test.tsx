@@ -18,7 +18,7 @@ import type {
   Estimate,
   MetricChange,
   ModelReport,
-  PatternFinding,
+  StoredPattern,
 } from "@/types/evidence";
 
 function estimate(overrides: Partial<Estimate> = {}): Estimate {
@@ -170,20 +170,22 @@ describe("Change", () => {
   });
 });
 
-function finding(overrides: Partial<PatternFinding> = {}): PatternFinding {
+function finding(overrides: Partial<StoredPattern> = {}): StoredPattern {
   return {
+    id: "019fb99f-fdc9-7316-9e3e-69f5fba86a50",
     kind: "overtrading",
     label: "Overtrading",
     description: "Trades taken beyond the fourth in a session",
     polarity: "leak",
-    affected: 100,
-    unaffected: 300,
-    unit: "currency",
-    difference: "-211.13",
-    estimated_cost: "-21113.24",
-    reliability: "reliable",
-    is_actionable: true,
-    adjusted_p_value: "0.004",
+    sample_size: 100,
+    effect_size: "-0.41",
+    p_value: "0.004",
+    confidence_low: "-343.67",
+    confidence_high: "-78.20",
+    is_significant: true,
+    estimated_annual_impact: "-21113.24",
+    detail: {},
+    engine_version: 1,
     ...overrides,
   };
 }
@@ -197,7 +199,7 @@ describe("Finding", () => {
 
   it("never attaches a cost to an unestablished pattern", () => {
     const { container } = render(
-      <Finding finding={finding({ is_actionable: false })} />,
+      <Finding finding={finding({ is_significant: false })} />,
     );
 
     // The loudest coincidence in a scan must not appear beside a dollar figure.
@@ -205,7 +207,7 @@ describe("Finding", () => {
   });
 
   it("labels an unestablished pattern as examined rather than found", () => {
-    render(<Finding finding={finding({ is_actionable: false })} />);
+    render(<Finding finding={finding({ is_significant: false })} />);
 
     expect(screen.getByText("examined")).toBeInTheDocument();
     expect(

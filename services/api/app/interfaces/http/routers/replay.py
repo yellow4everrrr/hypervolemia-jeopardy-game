@@ -17,7 +17,6 @@ from sqlalchemy import select
 from app.application.use_cases.compute_excursions import ComputeExcursions, summarise
 from app.core.errors import NotFoundError
 from app.domain.common.enums import ExecutionRole, Timeframe
-from app.domain.marketdata.bars import resample
 from app.domain.marketdata.replay import LegInput, build_markers, build_risk_box, build_window
 from app.infrastructure.db.models.instruments import Instrument
 from app.infrastructure.db.models.trading import Trade, TradeExecution
@@ -88,17 +87,29 @@ async def trade_replay(
         mfe_price=trade.mfe_price,
     )
 
-    stored = await SqlAlchemyBarRepository(session).load_series(
+    # `load_at`, not `load_series`: aggregation has to apply to the *automatic* timeframe
+    # too, not only to a caller's override. `build_window` picks a resolution from the
+    # trade's duration, and that resolution is frequently one nobody stored — a 38-minute
+    # trade selects 2m against a feed that writes 1m. Reading storage directly returned an
+    # empty series, which the endpoint reported as `bar_count: 0` and the chart drew as a
+    # blank pane with no indication that a resample would have filled it.
+    served = timeframe or window.primary_timeframe
+    if served.seconds < window.primary_timeframe.seconds:
+        served = window.primary_timeframe
+
+    stored = await SqlAlchemyBarRepository(session).load_at(
         instrument.id,
-        window.primary_timeframe,
+        served,
         start=window.window_start,
         end=window.window_end,
         symbol=instrument.symbol,
     )
-    if timeframe is not None and timeframe.seconds > window.primary_timeframe.seconds:
-        stored = resample(stored, timeframe)
 
     payload = window.to_payload()
+    # The resolution the bars are actually at, which is not always the one the window
+    # chose: a caller may coarsen it. The UI labels the chart from this rather than from
+    # `primary_timeframe`, so the axis never claims an interval the candles are not.
+    payload["served_timeframe"] = served.value
     payload["markers"] = [marker.to_payload() for marker in markers]
     payload["risk_box"] = build_risk_box(
         direction=trade.direction,

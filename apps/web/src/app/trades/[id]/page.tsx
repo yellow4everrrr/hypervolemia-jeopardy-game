@@ -7,11 +7,20 @@ import { ReplayChart, type ChartMarker, type PriceLine } from "@/components/repl
 import { ReplayControls, usePlayback } from "@/components/replay/controls";
 import { PageHeader } from "@/components/shell";
 import { request } from "@/lib/api";
-import { formatMoney, formatR } from "@/lib/format";
+import { formatMoney, formatPrice } from "@/lib/format";
 import { revealed, type Bar, type Gap } from "@/lib/playback";
 
 interface ReplayPayload {
+  /** The resolution the window *chose*, from the trade's duration. */
   primary_timeframe: string;
+  /**
+   * The resolution the returned bars are actually at.
+   *
+   * Usually the same as `primary_timeframe`, but not when a caller coarsens it — and
+   * labelling the chart from the wrong one puts an interval on the axis that the candles
+   * do not have.
+   */
+  served_timeframe: string;
   bars: Bar[];
   gaps: Gap[];
   bar_count: number;
@@ -104,10 +113,10 @@ export default function TradeReplayPage({
                 {formatMoney(data.trade.net_pnl)}
               </span>
               <span className="text-slate-500">
-                entry {formatR(data.trade.avg_entry_price)}
+                entry {formatPrice(data.trade.avg_entry_price)}
               </span>
               <span className="ml-auto text-slate-600">
-                {data.bar_count} bars at {data.primary_timeframe}
+                {data.bar_count} bars at {data.served_timeframe}
               </span>
             </div>
 
@@ -120,13 +129,13 @@ export default function TradeReplayPage({
             <ReplayControls
               bars={bars}
               gaps={data.gaps}
-              timeframe={data.primary_timeframe}
+              timeframe={data.served_timeframe}
               state={state}
               dispatch={dispatch}
             />
 
             <p className="text-[11px] leading-relaxed text-slate-600">
-              This is a reconstruction at {data.primary_timeframe} resolution, not a
+              This is a reconstruction at {data.served_timeframe} resolution, not a
               recording. Each candle summarises an interval; the path price took inside
               one was never recorded, and nothing here interpolates between them.
             </p>

@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
 from app.domain.common.enums import Timeframe
-from app.domain.marketdata.bars import Bar, BarSeries
+from app.domain.marketdata.bars import Bar, BarSeries, resample
 from app.infrastructure.db.models.instruments import Instrument
 from app.infrastructure.db.models.marketdata import MarketBar
 
@@ -84,6 +84,75 @@ class SqlAlchemyBarRepository:
                 for row in rows
             ),
         )
+
+    async def stored_timeframes(self, instrument_id: UUID) -> list[Timeframe]:
+        """Which resolutions this instrument actually has bars at, finest first.
+
+        Needed because a caller asking for 2m bars cannot otherwise tell the difference
+        between "this instrument has no data" and "this instrument has minute bars that
+        nobody aggregated". Those look identical — an empty series — and the replay chart
+        rendered the second as the first for every trade in the demo history.
+        """
+        rows = (
+            await self._session.execute(
+                select(MarketBar.timeframe)
+                .where(MarketBar.instrument_id == instrument_id)
+                .distinct()
+            )
+        ).scalars().all()
+        return sorted((Timeframe(row) for row in rows), key=lambda tf: tf.seconds)
+
+    async def load_at(
+        self,
+        instrument_id: UUID,
+        timeframe: Timeframe,
+        *,
+        start: datetime,
+        end: datetime,
+        symbol: str | None = None,
+    ) -> BarSeries:
+        """Bars at ``timeframe``, aggregating from a finer stored series when needed.
+
+        The replay endpoint has always documented this behaviour — "anything coarser than
+        the stored resolution is aggregated on the fly rather than requiring a second
+        stored series" — and only implemented it for an explicit caller override. The
+        *automatic* timeframe, chosen from trade duration, went straight to storage: a
+        38-minute trade selects 2m, the ingest wrote 1m, and the endpoint returned
+        ``bar_count: 0`` with no error. The chart drew an empty pane and the page looked
+        like it had loaded.
+
+        Aggregating from the **coarsest** stored series that is still finer than the
+        target minimises the rows read; only when nothing finer exists does this return
+        empty, which is then a true statement about the data rather than about the query.
+        """
+        direct = await self.load_series(
+            instrument_id, timeframe, start=start, end=end, symbol=symbol
+        )
+        if direct.bars:
+            return direct
+
+        finer = [
+            candidate
+            for candidate in await self.stored_timeframes(instrument_id)
+            if candidate.seconds < timeframe.seconds
+        ]
+        if not finer:
+            return direct
+
+        base = await self.load_series(
+            instrument_id, finer[-1], start=start, end=end, symbol=symbol
+        )
+        if not base.bars:
+            return direct
+
+        logger.debug(
+            "bars.aggregated",
+            instrument_id=str(instrument_id),
+            stored=finer[-1].value,
+            served=timeframe.value,
+            bars=len(base),
+        )
+        return resample(base, timeframe)
 
     async def upsert_bars(
         self,

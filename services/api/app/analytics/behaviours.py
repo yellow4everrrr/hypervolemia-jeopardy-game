@@ -408,8 +408,12 @@ def size_escalation(sequenced: Sequence[SequencedTrade], **kwargs: Any) -> Behav
     return _finding(
         "size_escalation",
         "Increasing size while down on the session",
-        f"Trades larger than the usual {typical} contracts taken while the session was "
-        "negative, compared with every other trade.",
+        # `normalize` because the median comes off a NUMERIC(20,8) column and formats as
+        # "2.00000000". This string is rendered verbatim in the UI and handed to the AI
+        # layer, and neither trims it — "larger than the usual 2.00000000 contracts" is
+        # how it reached the screen.
+        f"Trades larger than the usual {typical.normalize()} contracts taken while the "
+        "session was negative, compared with every other trade.",
         present,
         absent,
         detail={"median_size": str(typical)},
