@@ -18,15 +18,28 @@ reviewable, ships tests and docs, and leaves `main` deployable.
 | 2 | **Tradovate integration & sync pipeline** | Zero manual journaling is the core promise. Token lifecycle, REST backfill, WebSocket live fills, idempotent ingestion, safe sync cursors, reconciliation against broker P/L. | ✅ Complete |
 | 3 | **Analytics engine** | Every AI claim must trace to a deterministic Python number. Expectancy, profit factor, Sharpe/Sortino, SQN, Kelly, risk of ruin, drawdown, edge ratio, Monte Carlo, bootstrap confidence intervals, the full segmentation cube, and the significance control that stops it manufacturing edges. | ✅ Complete |
 | 4 | **Market data & replay engine** | Replay and MAE/MFE need bar data. TimescaleDB hypertables, bar ingestion, replay window computation, marker generation, S3 snapshot pipeline. | ✅ Complete |
-| 5 | **Frontend foundation** | Next.js + Clerk + design system, dashboard, trade blotter, trade detail. Bloomberg density with Linear polish. | ⏳ Next |
-| 6 | **Trade replay UI** | Lightweight Charts playback: play/pause/seek/speed, entry/exit/stop/target markers, risk box, P&L animation, indicators, drawings. | Planned |
-| 7 | **Strategy builder & compliance engine** | Turns subjective "did I follow my plan?" into a scored, rule-by-rule verdict on every imported trade. | Planned |
-| 8 | **Pattern & setup detection** | Unsupervised clustering + hypothesis testing to surface hidden edges and leaks; automatic setup classification. | Planned |
+| 5 | **Frontend foundation** | Next.js + Clerk + design system, dashboard, trade blotter, trade detail. Bloomberg density with Linear polish. | Planned (after 12) |
+| 6 | **Trade replay UI** | Lightweight Charts playback: play/pause/seek/speed, entry/exit/stop/target markers, risk box, P&L animation, indicators, drawings. | Planned (after 12) |
+| 7 | **Strategy builder & compliance engine** | Turns subjective "did I follow my plan?" into a scored, rule-by-rule verdict on every imported trade. | ✅ Complete |
+| 8 | **Pattern & setup detection** | Unsupervised clustering + hypothesis testing to surface hidden edges and leaks; automatic setup classification. | ⏳ Next |
 | 9 | **AI coach layer** | Claude as head quant researcher, constrained by a strict evidence contract: it may only cite metrics returned by the analytics engine. | Planned |
 | 10 | **What-if simulator** | Counterfactual re-simulation (different stop/target/RR/ATR trail/filters) with recomputed expectancy and significance. | Planned |
 | 11 | **ML layer** | Success probability, expected R, optimal stop/target models with proper walk-forward validation and calibration. | Planned |
 | 12 | **Reports & scheduling** | Daily → annual reports with leak quantification and expected annual improvement. | Planned |
 | 13 | **Hardening & scale** | Partitioning, continuous aggregates, observability, rate limits, RLS, deployment. | Planned |
+
+### A note on ordering
+
+The backend milestones (7–12) are being built before the frontend ones (5–6), which is
+a deliberate departure from the numbering above.
+
+The reason is that 7–12 compound on each other and on the analytics engine, while 5 and
+6 consume an API. Building the UI against a half-finished API means building it twice:
+the compliance panel, the pattern list, the coach transcript and the what-if controls
+each change the shape of the trade detail view, and a frontend written before those
+exist would be refactored on every backend milestone. The frontend milestones are
+unchanged in scope — only in sequence — and the numbering is kept so existing
+references stay valid.
 
 ---
 
@@ -133,6 +146,68 @@ Delivered:
 **Explicitly not in milestone 3:** MAE/MFE and edge ratio return undefined until
 milestone 4 supplies bar data; scheduled recomputation waits for the worker in
 milestone 13.
+
+---
+
+## Milestone 4 — delivered scope
+
+**Why this fourth.** Two of milestone 3's metrics — MAE/MFE and edge ratio — were
+returning undefined because nothing supplied prices *between* entry and exit. Replay
+needs the same data. Building both on one bar pipeline avoids two ingestion paths that
+would inevitably disagree about what a candle is.
+
+Delivered:
+
+- `BarSeries` with exact-decimal OHLCV bars, `covering()` window selection that includes
+  the bar a trade opened inside, and on-the-fly `resample` to coarser timeframes.
+- Excursion computation from highs and lows rather than closes — a stop is hit by the
+  low, not by the close — feeding `mae_r`, `mfe_r` and `edge_ratio` back onto trades.
+- `sequence_ambiguous()`: when a single bar contains both the excursion extremes, the
+  order of events inside it is unknowable, and the result is flagged rather than assumed.
+- Replay window computation with automatic timeframe choice, entry/exit/scale markers,
+  and a risk box that is `None` when no stop was recorded.
+- TimescaleDB `market_bars` hypertable, bar repository, and an S3-compatible object
+  store with content-addressed screenshot keys.
+
+**Explicitly not in milestone 4:** the replay *UI* (milestone 6) and automatic screenshot
+capture, which needs a headless renderer scheduled by the worker in milestone 13.
+
+---
+
+## Milestone 7 — delivered scope
+
+**Why this now.** Every metric so far answers "how did I do?". None answers "did I do
+what I said I would?" — and for most traders the gap between those two questions is
+where the money goes. It also has to precede the AI layer: a coach that can point at a
+specific broken rule and what it cost is giving evidence, and one that cannot is giving
+opinion.
+
+Delivered:
+
+- A declarative predicate AST for rules ([ADR 0005](./adr/0005-compliance-scoring.md)).
+  Rules are stored as JSON trees and interpreted; nothing user-supplied is ever executed.
+- **Three-valued evaluation** — pass, fail, or *unevaluable*. A rule about stop placement
+  cannot be checked on a trade with no recorded stop, and scoring that as a violation
+  would manufacture indiscipline out of missing data.
+- Severity-weighted scoring where unevaluable rules are excluded from the denominator
+  and reported as coverage, plus a ceiling that stops one critical breach being averaged
+  away by nine passed advisories.
+- A 30-field rule vocabulary published over HTTP, so the rule builder renders the
+  engine's own contract and a typo is rejected at save time rather than reading as
+  unevaluable forever.
+- Session-aware context: sequence-sensitive rules ("at most six trades a session",
+  "wait ten minutes after two losses") are evaluated against the state of the day as it
+  was *immediately before* each trade.
+- Rule impact measurement — what breaking a rule has historically been associated with,
+  labelled as association rather than causation in the payload itself.
+- Versioned strategies: revising rules creates a new version, so past compliance scores
+  remain reproducible against the rules that were actually in force.
+- Eight starter rules, every one checkable from data the journal imports automatically.
+- 61 new tests, including database-backed proof that recomputation converges and that an
+  unevaluable rule is never stored as a failure.
+
+**Explicitly not in milestone 7:** automatic setup classification (milestone 8) and any
+natural-language commentary on a compliance report (milestone 9).
 
 ---
 

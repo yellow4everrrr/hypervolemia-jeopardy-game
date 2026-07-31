@@ -109,7 +109,9 @@ the migrations, and rolls back to base.
 - [ADR 0002](docs/adr/0002-ai-evidence-contract.md) — how the AI is prevented from inventing statistics
 - [ADR 0003](docs/adr/0003-broker-sync.md) — why the sync cursor never skips a fill
 - [ADR 0004](docs/adr/0004-analytics-honesty.md) — why unproven segments are never findings
+- [ADR 0005](docs/adr/0005-compliance-scoring.md) — why "unevaluable" is not a violation
 - [Analytics](docs/analytics.md) — every statistic, its definition, and what it refuses to compute
+- [Compliance](docs/compliance.md) — the rule language, the scoring model, and the API
 - [Tradovate integration](docs/tradovate-integration.md) — API specifics, auth, framing, known gaps
 
 ## Tech stack
