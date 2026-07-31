@@ -24,8 +24,8 @@ reviewable, ships tests and docs, and leaves `main` deployable.
 | 8 | **Pattern & setup detection** | Unsupervised clustering + hypothesis testing to surface hidden edges and leaks; automatic setup classification. | ✅ Complete |
 | 9 | **AI coach layer** | Claude as head quant researcher, constrained by a strict evidence contract: it may only cite metrics returned by the analytics engine. | ✅ Complete |
 | 10 | **What-if simulator** | Counterfactual re-simulation (different stop/target/RR/ATR trail/filters) with recomputed expectancy and significance. | ✅ Complete |
-| 11 | **ML layer** | Success probability, expected R, optimal stop/target models with proper walk-forward validation and calibration. | ⏳ Next |
-| 12 | **Reports & scheduling** | Daily → annual reports with leak quantification and expected annual improvement. | Planned |
+| 11 | **ML layer** | Success probability and expected R with walk-forward validation, calibration and a refusal-to-serve gate. Optimal stop/target deferred — see below. | ✅ Complete |
+| 12 | **Reports & scheduling** | Daily → annual reports with leak quantification and expected annual improvement. | ⏳ Next |
 | 13 | **Hardening & scale** | Partitioning, continuous aggregates, observability, rate limits, RLS, deployment. | Planned |
 
 ### A note on ordering
@@ -340,6 +340,60 @@ The reasoning is recorded in
 
 **Explicitly not in milestone 10:** ATR-based trailing stops, which need bar-by-bar
 paths rather than the excursion summary; and portfolio-level simulation across accounts.
+
+---
+
+## Milestone 11 — delivered scope
+
+**Why this now.** Everything before it describes the past. This one makes a claim about a
+trade that has not happened, and a trader will *size on that number* — which makes it the
+surface where being wrong is most expensive, and the one where the default answer has to
+be no.
+
+Delivered:
+
+- Two heads — win probability (ridge logistic) and expected R (ridge linear) — each
+  trained, validated and gated independently, so a trader who records no stops still gets
+  a win-rate model.
+- **A structural leakage barrier.** `EntrySnapshot` carries only what was knowable at
+  entry and has no outcome fields at all, so a feature extractor written against it
+  cannot reach `net_pnl`, `r_multiple`, `mfe_r`, `mae_r` or `duration_seconds` — not by
+  accident, not by refactor. Sequence context (trades so far today, session P&L, losing
+  streak) is filled as of *before* each trade, which is the second and subtler leak.
+- Walk-forward validation that splits on **session boundaries**, never inside a day, with
+  the ridge penalty chosen by a nested forward split of the training window only.
+- Calibration against a parametric bootstrap null, a Brier skill score against the
+  trader's own base rate, and deliberately **no accuracy, F1 or ROC-AUC** — all of them
+  are insensitive to calibration, which is the entire question.
+- Refusals as first-class stored results with plain-language reasons, plus a `CHECK`
+  constraint making a row that is both deployable and refused impossible.
+- Pure-Decimal Newton fitting and a hand-written linear solver: no new dependency, and a
+  stored model reproduces its predictions regardless of platform `libm`.
+- 100 new tests, migration `0003_prediction_models`.
+
+**The skill gate was wrong on the first attempt**, and it is recorded because the failure
+generalises. The original rule was `skill > 0`: serve the model if it beat the baseline
+out of sample. Probing it on ten histories whose outcomes were *independent of every
+feature* produced skill scores scattered around zero — and one landed at **+0.014**, which
+under that rule was deployable. A trader would have been shown per-trade win
+probabilities computed from pure noise, with nothing marking them as such.
+
+That is the same defect ADR 0006 and ADR 0008 each found in their own domain: a point
+estimate compared against a threshold, with nothing said about how far it would move on a
+different sample. Skill now carries a **session-block bootstrap interval** and deployment
+requires it to exclude zero — sessions rather than trades, because resampling correlated
+trades individually would have produced an interval half the width it should be and
+hidden this exact false positive. After the change: **0 false deployments in 40 runs**,
+with the positive control still deploying.
+
+The reasoning is recorded in [ADR 0009](./adr/0009-predictive-models.md), and the working
+guide is [docs/ml.md](./ml.md).
+
+**Explicitly not in milestone 11:** categorical features (one-hot overfits at this sample
+size and target encoding leaks unless recomputed per fold — segmentation already compares
+setups with a proper test); and optimal stop/target models, which need a grid search
+selected on training folds and measured out of sample. Shipping the naive version of the
+latter would undo ADR 0008.
 
 ---
 

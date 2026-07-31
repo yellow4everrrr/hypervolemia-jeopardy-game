@@ -12,14 +12,14 @@ was not given is rejected before it reaches the trader.
 
 ## Status
 
-Milestones 1–4 and 7–10 of 13 are complete. The backend milestones (7–12) are being
+Milestones 1–4 and 7–11 of 13 are complete. The backend milestones (7–12) are being
 built before the frontend ones (5–6) — see [`docs/roadmap.md`](docs/roadmap.md) for what
 each delivers and why the order changed.
 
 | | |
 |---|---|
-| **Delivered** | Clean-architecture backend · FIFO trade reconstruction · 33-table Postgres/TimescaleDB schema · idempotent ingestion · Tradovate REST + WebSocket sync with cursor safety · institutional analytics with bootstrap intervals and FDR-controlled segmentation · bar ingestion, MAE/MFE and replay windows · rule-based compliance scoring · behavioural and cluster pattern detection · an AI coach that cannot state an uncomputed number · counterfactual what-if simulation · FastAPI with Clerk auth · 566 tests · CI |
-| **Next** | Milestone 11 — the ML layer: success probability and expected R with walk-forward validation and calibration |
+| **Delivered** | Clean-architecture backend · FIFO trade reconstruction · 33-table Postgres/TimescaleDB schema · idempotent ingestion · Tradovate REST + WebSocket sync with cursor safety · institutional analytics with bootstrap intervals and FDR-controlled segmentation · bar ingestion, MAE/MFE and replay windows · rule-based compliance scoring · behavioural and cluster pattern detection · an AI coach that cannot state an uncomputed number · counterfactual what-if simulation · walk-forward-validated predictive models that refuse to serve unproven skill · FastAPI with Clerk auth · 736 tests · CI |
+| **Next** | Milestone 12 — reports and scheduling: daily to annual, with leak quantification |
 
 ## Quick start
 
@@ -113,9 +113,11 @@ the migrations, and rolls back to base.
 - [ADR 0006](docs/adr/0006-pattern-detection.md) — why a pattern must beat its own null
 - [ADR 0007](docs/adr/0007-coach-placeholders.md) — why the coach writes placeholders, not numbers
 - [ADR 0008](docs/adr/0008-counterfactual-simulation.md) — why a counterfactual is a claim about a sample
+- [ADR 0009](docs/adr/0009-predictive-models.md) — why a model that cannot prove its skill is not served
 - [Analytics](docs/analytics.md) — every statistic, its definition, and what it refuses to compute
 - [Compliance](docs/compliance.md) — the rule language, the scoring model, and the API
 - [What-if](docs/what-if.md) — counterfactual re-simulation, and how the null was chosen
+- [ML layer](docs/ml.md) — the leakage barrier, walk-forward validation, and why most models are refused
 - [Patterns](docs/patterns.md) — behavioural detectors, clustering, and what stops both inventing findings
 - [AI coach](docs/ai-coach.md) — the evidence bundle, the placeholder contract, and what gets rejected
 - [Tradovate integration](docs/tradovate-integration.md) — API specifics, auth, framing, known gaps

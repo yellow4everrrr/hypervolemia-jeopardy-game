@@ -19,6 +19,7 @@ from app.interfaces.http.routers import (
     coach,
     health,
     patterns,
+    predictions,
     replay,
     simulator,
     strategies,
@@ -85,5 +86,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(patterns.router, prefix=f"{settings.api_prefix}/v1")
     app.include_router(coach.router, prefix=f"{settings.api_prefix}/v1")
     app.include_router(simulator.router, prefix=f"{settings.api_prefix}/v1")
+    app.include_router(predictions.router, prefix=f"{settings.api_prefix}/v1")
 
     return app

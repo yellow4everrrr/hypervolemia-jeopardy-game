@@ -160,3 +160,66 @@ class DetectedPattern(UUIDPrimaryKeyMixin, UserScopedMixin, TimestampMixin, Base
     first_observed_at: Mapped[datetime | None]
     last_observed_at: Mapped[datetime | None]
     engine_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+
+
+class PredictionModel(UUIDPrimaryKeyMixin, UserScopedMixin, TimestampMixin, Base):
+    """One trained predictive model, with the evidence that decided whether to serve it.
+
+    Every column that qualifies the model is stored beside it, because a coefficient
+    vector without its provenance is unusable: a probability served today has to be
+    traceable to the walk-forward run that justified deploying it, and to the exact
+    arithmetic that produced it.
+
+    ``is_deployable`` is stored rather than recomputed on read. The gate depends on a
+    bootstrap and a calibration simulation costing seconds; recomputing it per request
+    would push a statistical decision into the serving path, where it would eventually
+    be cached, then skipped. A model row that is not deployable carries ``refusal`` and
+    is never served — the row exists so the trader can be told *why*, and so a later
+    training run can be compared against it.
+    """
+
+    __tablename__ = "prediction_models"
+    __table_args__ = (
+        Index("ix_prediction_models_user_head", "user_id", "head"),
+        Index(
+            "ix_prediction_models_user_head_created",
+            "user_id",
+            "head",
+            "created_at",
+        ),
+    )
+
+    #: ``win_probability`` or ``expected_r``. The two heads are trained, gated and
+    #: refused independently: a trader who records no stops still has a win-rate
+    #: history, and refusing both because one lacks its target discards real evidence.
+    head: Mapped[str] = mapped_column(String(32), nullable=False)
+    account_id: Mapped[UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE")
+    )
+
+    is_deployable: Mapped[bool] = mapped_column(nullable=False, server_default=text("false"))
+    #: Plain language for why this model is not served. Null exactly when deployable.
+    refusal: Mapped[str | None] = mapped_column(Text)
+
+    #: Out-of-sample skill against the baseline that needed no model, with the session
+    #: block bootstrap interval that decides whether it is real.
+    skill: Mapped[Decimal | None] = mapped_column(RATIO)
+    skill_low: Mapped[Decimal | None] = mapped_column(RATIO)
+    skill_high: Mapped[Decimal | None] = mapped_column(RATIO)
+
+    trades: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    folds: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    #: Predictions scored on data the model had not seen. The denominator behind every
+    #: performance figure on this row.
+    out_of_sample_predictions: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
+
+    #: Coefficients, feature list, calibration curve and skill evidence. JSONB because
+    #: the feature set changes with ``model_version`` and a schema requiring a migration
+    #: per feature is a schema that stops being extended.
+    detail: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb"), default=dict
+    )
+    model_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    trained_at: Mapped[datetime | None]
