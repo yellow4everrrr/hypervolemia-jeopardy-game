@@ -125,3 +125,28 @@ async def features() -> dict[str, Any]:
             "them with a proper significance test."
         ),
     }
+
+
+@router.get("/exit-rule", summary="Where to take profit, if anywhere")
+async def exit_rule(
+    user: CurrentUserDep,
+    session: SessionDep,
+    account_id: UUID | None = None,
+) -> dict[str, Any]:
+    """Walk-forward selection of a take-profit level.
+
+    Only targets are searched. Re-pricing a *stop* from excursion data is systematically
+    optimistic — an excursion says price reached a level, not that a fill was available
+    there — by an amount comparable to any improvement it would report. A target is a
+    limit order and the same artefact runs the other way, so an improvement that survives
+    here survives despite a bias working against it. See ADR 0014.
+
+    The figure reported is the out-of-sample performance of the *selection procedure*,
+    never the in-sample performance of the winning rule.
+    """
+    from app.ml.exits import recommend
+
+    trades = await SqlAlchemyModelRepository(session).load_trades(
+        user.id, account_id=account_id
+    )
+    return recommend(trades).to_payload()

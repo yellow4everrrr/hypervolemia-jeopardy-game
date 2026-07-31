@@ -391,9 +391,10 @@ guide is [docs/ml.md](./ml.md).
 
 **Explicitly not in milestone 11:** categorical features (one-hot overfits at this sample
 size and target encoding leaks unless recomputed per fold — segmentation already compares
-setups with a proper test); and optimal stop/target models, which need a grid search
-selected on training folds and measured out of sample. Shipping the naive version of the
-latter would undo ADR 0008.
+setups with a proper test).
+
+**Optimal exits were deferred here and delivered afterwards** — see the follow-on section
+below. Building them turned up a bias in the milestone 10 simulator.
 
 ---
 
@@ -607,6 +608,56 @@ The reasoning is in [ADR 0013](./adr/0013-replay-invents-a-path.md).
 **Explicitly not in milestone 6:** indicators and freehand drawings, which are a charting
 product rather than a journalling one and would be the first place a user drew a conclusion
 the data does not support.
+
+---
+
+## Follow-on — exit selection, and a bias it exposed
+
+Optimal stop/target models were in the original specification and deferred twice, out of
+milestones 10 and 11, on the grounds that the naive version is exactly the curve-fitting
+[ADR 0008](./adr/0008-counterfactual-simulation.md) refuses. Measured on pure noise, that
+naive grid search advertised improvements between **+$1,854 and +$5,089**.
+
+Delivered:
+
+- Walk-forward *selection*: pick the best rule on training sessions, apply that rule to the
+  test sessions, report only how the choice did on data it never saw.
+- Selection-stability and session-block interval gates on top of that.
+- 19 tests, `GET /predictions/exit-rule`.
+
+**The grid is not the hypothesis; the selection procedure is.** Correcting 144 comparisons
+over-corrects — a genuine moderate edge could not clear the threshold either, so the sweep
+would answer "nothing" to everyone regardless. Reframing to "does choosing this way beat
+what you already do, out of sample?" is one hypothesis tested once, and it is the question a
+trader actually has.
+
+**Then it recommended a rule on one noise sample in three**, on a driftless walk where
+optional stopping *proves* nothing can help. The cause was not the selection — it was the
+re-pricing, and it affects the shipped simulator too. One fixed 0.5R stop, no grid, no
+choosing, over 4,000 driftless-walk trades reported **+8.28 per trade**:
+
+```
+of 2,786 trades that traded through -0.5R:
+   mean actual final R  = -0.619
+   stopped at           = -0.500
+```
+
+An excursion says price *reached* a level; it does not say a fill was available there.
+Conditioning on "the extreme passed the stop" selects the paths that overshot it. Observing
+more finely shrinks the gap but never closes it, because barrier overshoot decays only with
+the square root of the sampling interval.
+
+**The sign depends on the order type.** A stop is a market order and fills at the trigger or
+worse, so assuming the trigger is optimistic. A target is a limit order and fills at the
+limit or better, so assuming the limit is conservative — the same data shows a 1R target
+reporting **−4.94 per trade**, biased against itself. So only targets are searched: an
+improvement that survives does so despite a bias working against it. After the restriction,
+**0 false recommendations in 10 noise runs**, with the positive control established 3 of 3.
+
+This is recorded against milestone 10 as well: its stop scenarios should be read as an upper
+bound rather than an estimate, and closing it properly needs bar-level fill modelling the
+schema does not yet support. Reasoning in
+[ADR 0014](./adr/0014-exit-selection-and-fill-bias.md).
 
 ---
 
