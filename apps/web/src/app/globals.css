@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+/*
+ * Bloomberg density, Linear polish.
+ *
+ * Dark by default rather than as a toggle: this is a tool people sit in front of for
+ * hours, often before dawn, next to a broker platform that is already dark. A light
+ * default would be the thing every user changes first.
+ *
+ * Numbers are monospaced and tabular everywhere. A column of P&L in a proportional font
+ * cannot be scanned — the digits do not line up, and scanning a blotter is the single
+ * most common thing anyone does here.
+ */
+
+@theme {
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
+
+  --color-surface: #070a0f;
+  --color-panel: #0b1017;
+  --color-edge: #1a2332;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--color-surface);
+  color: #e2e8f0;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Every numeric cell. Declared once so no table forgets it. */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}

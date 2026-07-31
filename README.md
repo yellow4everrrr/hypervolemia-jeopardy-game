@@ -12,14 +12,14 @@ was not given is rejected before it reaches the trader.
 
 ## Status
 
-Every backend milestone is complete: 1–4 and 7–13 of 13. The two remaining milestones are
-the frontend ones (5–6), deliberately built last — see [`docs/roadmap.md`](docs/roadmap.md)
-for what each delivers and why the order changed.
+Milestones 1–5 and 7–13 of 13 are complete. Only the trade replay UI (6) remains — see
+[`docs/roadmap.md`](docs/roadmap.md) for what each delivers and why the backend was built
+first.
 
 | | |
 |---|---|
-| **Delivered** | Clean-architecture backend · FIFO trade reconstruction · 33-table Postgres/TimescaleDB schema · idempotent ingestion · Tradovate REST + WebSocket sync with cursor safety · institutional analytics with bootstrap intervals and FDR-controlled segmentation · bar ingestion, MAE/MFE and replay windows · rule-based compliance scoring · behavioural and cluster pattern detection · an AI coach that cannot state an uncomputed number · counterfactual what-if simulation · walk-forward-validated predictive models that refuse to serve unproven skill · periodic reports with deduplicated leak costs · a Postgres-backed job queue and database-enforced tenant isolation · FastAPI with Clerk auth · 892 tests · CI |
-| **Next** | Milestone 5 — frontend foundation: Next.js, Clerk, dashboard, trade blotter |
+| **Delivered** | Clean-architecture backend · FIFO trade reconstruction · 33-table Postgres/TimescaleDB schema · idempotent ingestion · Tradovate REST + WebSocket sync with cursor safety · institutional analytics with bootstrap intervals and FDR-controlled segmentation · bar ingestion, MAE/MFE and replay windows · rule-based compliance scoring · behavioural and cluster pattern detection · an AI coach that cannot state an uncomputed number · counterfactual what-if simulation · walk-forward-validated predictive models that refuse to serve unproven skill · periodic reports with deduplicated leak costs · a Postgres-backed job queue and database-enforced tenant isolation · FastAPI with Clerk auth · a Next.js frontend whose components cannot render a number without its qualification · 911 tests · CI |
+| **Next** | Milestone 6 — trade replay UI: Lightweight Charts playback with markers and risk box |
 
 ## Quick start
 
@@ -48,6 +48,10 @@ The API serves OpenAPI docs at http://localhost:8000/docs outside production.
 ## Layout
 
 ```
+apps/web/                Next.js frontend
+  src/components/        evidence components — take Estimate, never number
+  src/lib/               typed API client, formatting, query hooks
+  src/types/             the backend's payload shapes, transcribed
 services/api/            FastAPI backend
   app/core/              settings, logging, UUIDv7, Decimal helpers, errors
   app/domain/            trading rules — pure, no I/O, no framework imports
@@ -119,6 +123,7 @@ the migrations, and rolls back to base.
 - [ADR 0009](docs/adr/0009-predictive-models.md) — why a model that cannot prove its skill is not served
 - [ADR 0010](docs/adr/0010-periodic-reports.md) — why report figures are attributed, never summed
 - [ADR 0011](docs/adr/0011-jobs-and-tenant-isolation.md) — why the queue is a table, and RLS needs a non-owner role
+- [ADR 0012](docs/adr/0012-frontend-honesty.md) — why the UI is where the qualifications get dropped
 - [Analytics](docs/analytics.md) — every statistic, its definition, and what it refuses to compute
 - [Compliance](docs/compliance.md) — the rule language, the scoring model, and the API
 - [What-if](docs/what-if.md) — counterfactual re-simulation, and how the null was chosen
@@ -134,6 +139,6 @@ the migrations, and rolls back to base.
 **Backend** FastAPI · SQLAlchemy 2.0 (async) · PostgreSQL + TimescaleDB · Redis ·
 Alembic · structlog
 **Auth** Clerk (local JWKS verification, no per-request network call)
-**Frontend** *(milestone 5)* Next.js · TypeScript · Tailwind · shadcn/ui ·
+**Frontend** Next.js · TypeScript · Tailwind · shadcn/ui ·
 TanStack Query · Zustand · TradingView Lightweight Charts
 **Tooling** ruff · mypy (strict) · pytest · Docker · GitHub Actions

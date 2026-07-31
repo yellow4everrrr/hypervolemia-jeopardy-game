@@ -18,8 +18,8 @@ reviewable, ships tests and docs, and leaves `main` deployable.
 | 2 | **Tradovate integration & sync pipeline** | Zero manual journaling is the core promise. Token lifecycle, REST backfill, WebSocket live fills, idempotent ingestion, safe sync cursors, reconciliation against broker P/L. | ✅ Complete |
 | 3 | **Analytics engine** | Every AI claim must trace to a deterministic Python number. Expectancy, profit factor, Sharpe/Sortino, SQN, Kelly, risk of ruin, drawdown, edge ratio, Monte Carlo, bootstrap confidence intervals, the full segmentation cube, and the significance control that stops it manufacturing edges. | ✅ Complete |
 | 4 | **Market data & replay engine** | Replay and MAE/MFE need bar data. TimescaleDB hypertables, bar ingestion, replay window computation, marker generation, S3 snapshot pipeline. | ✅ Complete |
-| 5 | **Frontend foundation** | Next.js + Clerk + design system, dashboard, trade blotter, trade detail. Bloomberg density with Linear polish. | ⏳ Next |
-| 6 | **Trade replay UI** | Lightweight Charts playback: play/pause/seek/speed, entry/exit/stop/target markers, risk box, P&L animation, indicators, drawings. | Planned |
+| 5 | **Frontend foundation** | Next.js + design system, dashboard, trade blotter, patterns, reports, jobs. Evidence components that will not render a number without what qualifies it. | ✅ Complete |
+| 6 | **Trade replay UI** | Lightweight Charts playback: play/pause/seek/speed, entry/exit/stop/target markers, risk box, P&L animation, indicators, drawings. | ⏳ Next |
 | 7 | **Strategy builder & compliance engine** | Turns subjective "did I follow my plan?" into a scored, rule-by-rule verdict on every imported trade. | ✅ Complete |
 | 8 | **Pattern & setup detection** | Unsupervised clustering + hypothesis testing to surface hidden edges and leaks; automatic setup classification. | ✅ Complete |
 | 9 | **AI coach layer** | Claude as head quant researcher, constrained by a strict evidence contract: it may only cite metrics returned by the analytics engine. | ✅ Complete |
@@ -515,6 +515,54 @@ operator guide is [docs/operations.md](./operations.md).
 aggregates, which are unnecessary below roughly ten million trades and would add
 operational complexity nobody currently needs; and per-tenant queue fairness, where the
 fix when it is needed is a weighted claim rather than a second queue.
+
+---
+
+## Milestone 5 — delivered scope
+
+**Why this now.** Every backend milestone exists to attach a qualification to a number, and
+all of it survives right up to the render function. The frontend is where it dies — not
+through a bug anybody files, but because `difference` sits next to `is_established` in the
+payload and one of them is easier to render.
+
+Delivered:
+
+- Next.js 16 / React 19 / TypeScript strict / Tailwind 4, dark-first, monospaced tabular
+  numerics throughout.
+- **Evidence components** that take an `Estimate`, a `MetricChange`, a `PatternFinding` or a
+  `ModelReport` — never a bare number. Passing `estimate.value` to `<Metric>` is a type
+  error.
+- Typed API client over the backend's single error envelope, with decimals kept as strings
+  to the point of render.
+- Dashboard, trade blotter, patterns, reports and jobs screens.
+- 19 tests asserting the honesty properties directly.
+
+**The failure this milestone is built against looks like success.** A designer asks for a
+trend arrow; the dashboard ships one on a four-point win-rate move across twenty trades —
+exactly the noise [ADR 0010](./adr/0010-periodic-reports.md) refuses to call a change. The
+page looks finished, no test fails, and the product now looks *more* confident than the one
+that was careful. The same shape recurs everywhere: an `undefined_reason` becomes a dash, a
+model refusal becomes an empty state, a `Decimal` string becomes `parseFloat`.
+
+Three properties are enforced by tests rather than by review: an unestablished change
+renders no arrow; an undefined statistic renders its reason and never a zero; and a model
+that is not deployable renders no probability **even when a caller passes one**.
+
+`unchanged` is deliberately distinct from `flat`. One means the values matched, the other
+means the measurement could not tell them apart — and on a typical monthly report almost
+every metric is `unchanged`, so collapsing them would turn the honest result into a boring
+one.
+
+The reasoning is in [ADR 0012](./adr/0012-frontend-honesty.md).
+
+**Explicitly not in milestone 5:** Clerk is wired at the layout boundary but sign-in flows
+are not built, since the API client takes a token parameter rather than reaching for a
+global; and the replay chart, which is milestone 6.
+
+**A consequence worth naming.** This product will look less confident than its competitors.
+Most months establish no changes and most traders' models are refused. A journal rendering
+arrows and probabilities on the same data is not more capable, only less careful — but it
+demos better, and that pressure is real.
 
 ---
 
