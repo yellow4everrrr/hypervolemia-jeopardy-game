@@ -288,6 +288,11 @@ class TradeExecution(Base):
     trades: selling 5 while long 2 closes one trade and opens another. Quantity and
     costs are allocated pro rata, so summing ``allocated_commission`` across trades
     reproduces the broker's charge exactly.
+
+    "Exactly" is load-bearing, and is not what naive pro-rata gives you: rounding each
+    slice independently leaves a residue at the eighth decimal that survives into the
+    total. :meth:`Execution.cost_for_quantity` differences a rounded running total
+    instead, so the shares close out the charge by construction.
     """
 
     __tablename__ = "trade_executions"

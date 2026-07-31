@@ -234,3 +234,43 @@ def test_max_daily_drawdown_undefined_without_session_dates() -> None:
 
     assert result.value is None
     assert "session date" in (result.undefined_reason or "")
+
+
+def test_summary_depths_are_positive_magnitudes() -> None:
+    """`current_drawdown` must carry the same sign convention as `max_drawdown`.
+
+    The two describe the same quantity, and a struct reporting `max_drawdown = 1200`
+    beside `current_drawdown = -1200` makes any comparison between them wrong — a
+    dashboard asking "are we at the worst point ever?" would answer no at exactly the
+    moment the answer is yes.
+    """
+    curve = build_equity_curve(make_trades(["1000", "-400", "100", "-900"]))
+    summary = summarise_drawdown(curve)
+
+    # Peak 1000, final -200: the current drawdown *is* the maximum drawdown here.
+    assert summary.max_drawdown == Decimal(1200)
+    assert summary.current_drawdown == Decimal(1200)
+    assert summary.current_drawdown == summary.max_drawdown
+    assert summary.is_underwater
+    assert not summary.is_at_high_water_mark
+
+
+def test_the_point_series_stays_signed() -> None:
+    """The chart series is deliberately negative — it is drawn below the zero line.
+
+    Only the *summary* reports magnitudes. This test pins the distinction so a future
+    "consistency" fix does not flatten one into the other and invert the chart.
+    """
+    curve = build_equity_curve(make_trades(["1000", "-400"]))
+
+    assert curve[-1].drawdown == Decimal(-400)
+    assert summarise_drawdown(curve).current_drawdown == Decimal(400)
+
+
+def test_a_new_high_is_not_underwater() -> None:
+    curve = build_equity_curve(make_trades(["100", "-50", "200"]))
+    summary = summarise_drawdown(curve)
+
+    assert summary.current_drawdown == Decimal(0)
+    assert not summary.is_underwater
+    assert summary.is_at_high_water_mark

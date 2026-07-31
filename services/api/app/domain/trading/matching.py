@@ -118,8 +118,12 @@ class _TradeBuilder:
             max_position_size=trade.max_position_size,
         )
 
-    def add_entry(self, execution: Execution, quantity: Decimal) -> None:
-        commission, fees = execution.cost_for_quantity(quantity)
+    def add_entry(
+        self, execution: Execution, quantity: Decimal, *, already_allocated: Decimal = ZERO
+    ) -> None:
+        commission, fees = execution.cost_for_quantity(
+            quantity, already_allocated=already_allocated
+        )
         self.legs.append(
             TradeLeg(
                 execution_external_id=execution.external_id,
@@ -135,8 +139,17 @@ class _TradeBuilder:
         self.open_quantity += quantity
         self.max_position_size = max(self.max_position_size, self.open_quantity)
 
-    def add_exit(self, execution: Execution, quantity: Decimal, realized_points: Decimal) -> None:
-        commission, fees = execution.cost_for_quantity(quantity)
+    def add_exit(
+        self,
+        execution: Execution,
+        quantity: Decimal,
+        realized_points: Decimal,
+        *,
+        already_allocated: Decimal = ZERO,
+    ) -> None:
+        commission, fees = execution.cost_for_quantity(
+            quantity, already_allocated=already_allocated
+        )
         self.legs.append(
             TradeLeg(
                 execution_external_id=execution.external_id,
@@ -196,6 +209,10 @@ class _PositionMachine:
                 self._open_trade(execution)
 
             assert self._builder is not None
+            # How much of this fill earlier slices already took. Passed down so the cost
+            # split is computed against a running total and closes out exactly.
+            allocated = execution.quantity - remaining
+
             if self._is_increasing(execution.side):
                 self._lots.append(
                     OpenLot(
@@ -204,11 +221,11 @@ class _PositionMachine:
                         execution_external_id=execution.external_id,
                     )
                 )
-                self._builder.add_entry(execution, remaining)
+                self._builder.add_entry(execution, remaining, already_allocated=allocated)
                 remaining = ZERO
                 continue
 
-            remaining = self._reduce(execution, remaining)
+            remaining = self._reduce(execution, remaining, already_allocated=allocated)
 
     def finish(self) -> PositionState:
         """Emit any still-open trade and return the resumable state."""
@@ -236,7 +253,9 @@ class _PositionMachine:
         assert self._builder is not None
         return (side is Side.BUY) == (self._builder.direction is Direction.LONG)
 
-    def _reduce(self, execution: Execution, remaining: Decimal) -> Decimal:
+    def _reduce(
+        self, execution: Execution, remaining: Decimal, *, already_allocated: Decimal = ZERO
+    ) -> Decimal:
         """Match ``remaining`` against open lots FIFO. Returns the unmatched remainder.
 
         A non-zero remainder means the fill exceeded the open position — the position
@@ -260,7 +279,9 @@ class _PositionMachine:
                 self._lots[0] = replace(lot, quantity=lot.quantity - quantity)
 
         if matched > 0:
-            self._builder.add_exit(execution, matched, realized_points)
+            self._builder.add_exit(
+                execution, matched, realized_points, already_allocated=already_allocated
+            )
 
         if not self._lots:
             self._completed.append(self._builder.build(closed=True))

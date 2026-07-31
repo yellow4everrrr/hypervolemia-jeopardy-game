@@ -177,11 +177,24 @@ def _period(
 
 @dataclass(frozen=True, slots=True)
 class DrawdownSummary:
+    """Drawdown depths as **positive magnitudes**.
+
+    Note the sign convention, which differs deliberately from
+    :attr:`EquityPoint.drawdown`. A point on the equity curve carries a *signed*
+    drawdown because it is a chart series and is drawn below the zero line. A summary
+    reports *depths*, and "the worst drawdown was 1,200" is how a depth is spoken about.
+
+    Mixing the two would be the real hazard: a struct reporting ``max_drawdown = 1200``
+    beside ``current_drawdown = -1200`` describes one situation with two opposite signs,
+    and any consumer comparing them — "are we at the worst point ever?" — gets it wrong.
+    """
+
     max_drawdown: Decimal
     max_drawdown_pct: Decimal | None
     average_drawdown: Decimal | None
     longest_drawdown_trades: int | None
     longest_recovery_trades: int | None
+    #: Depth below the running peak right now, positive; zero at a new high.
     current_drawdown: Decimal
     time_underwater_pct: Decimal | None
     periods: tuple[DrawdownPeriod, ...]
@@ -190,7 +203,12 @@ class DrawdownSummary:
 
     @property
     def is_underwater(self) -> bool:
-        return self.current_drawdown < 0
+        return self.current_drawdown > 0
+
+    @property
+    def is_at_high_water_mark(self) -> bool:
+        """At or above every previous peak — the complement of being underwater."""
+        return self.current_drawdown == 0
 
     @property
     def recovery_factor(self) -> Decimal | None:
@@ -242,7 +260,8 @@ def summarise_drawdown(points: Sequence[EquityPoint]) -> DrawdownSummary:
                 default=None,
             )
         ),
-        current_drawdown=points[-1].drawdown,
+        # Negated into a depth, to match ``max_drawdown`` and the rest of this struct.
+        current_drawdown=-points[-1].drawdown,
         time_underwater_pct=divide(Decimal(underwater), Decimal(len(points))),
         periods=tuple(periods),
         peak_equity=points[-1].peak,

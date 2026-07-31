@@ -12,7 +12,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from app.core.errors import DomainError
-from app.core.money import ZERO
+from app.core.money import ZERO, quantize_money
 from app.domain.common.enums import Side
 
 
@@ -85,16 +85,54 @@ class Execution:
         """
         return (self.executed_at, self.sequence, self.external_id)
 
-    def cost_for_quantity(self, quantity: Decimal) -> tuple[Decimal, Decimal]:
+    def cost_for_quantity(
+        self, quantity: Decimal, *, already_allocated: Decimal = ZERO
+    ) -> tuple[Decimal, Decimal]:
         """Pro-rata share of ``(commission, fees)`` attributable to part of this fill.
 
         A single fill can straddle two trades when a position flips (sell 5 while long
-        2 closes one trade and opens another). Splitting the costs by quantity keeps
-        the sum of per-trade costs exactly equal to what the broker charged.
+        2 closes one trade and opens another), so its costs have to be split.
+
+        The split is computed on the **running total** rather than on each slice
+        independently::
+
+            share = round(cost × (allocated + quantity) / total)
+                  − round(cost × allocated / total)
+
+        Rounding each slice on its own leaves a residue — three slices of a $2.10
+        commission round to $0.70 each only because that example divides evenly, and
+        most do not. Differencing a rounded cumulative makes the shares sum to
+        ``round(cost × total / total)``, which is the broker's charge exactly, with the
+        rounding error absorbed by whichever slice happens to be last.
+
+        Without this, reconciliation against the broker's own statement — the check
+        that catches reconstruction bugs before the trader does — fails on cents that
+        are our arithmetic rather than their accounting.
+
+        Args:
+            quantity: Size of this slice.
+            already_allocated: How much of this fill has been allocated to earlier
+                slices. Zero when the fill maps to a single trade.
         """
-        if quantity <= 0 or quantity > self.quantity:
+        if quantity <= 0 or already_allocated < 0:
             raise DomainError(
                 f"execution {self.external_id}: cannot allocate {quantity} of {self.quantity}"
             )
-        ratio = quantity / self.quantity
-        return self.commission * ratio, self.fees * ratio
+        if already_allocated + quantity > self.quantity:
+            raise DomainError(
+                f"execution {self.external_id}: allocating {already_allocated + quantity} "
+                f"exceeds its quantity of {self.quantity}"
+            )
+        return (
+            self._cumulative(self.commission, already_allocated + quantity)
+            - self._cumulative(self.commission, already_allocated),
+            self._cumulative(self.fees, already_allocated + quantity)
+            - self._cumulative(self.fees, already_allocated),
+        )
+
+    def _cumulative(self, cost: Decimal, consumed: Decimal) -> Decimal:
+        """Cost attributable to the first ``consumed`` contracts of this fill."""
+        if consumed >= self.quantity:
+            # Exact, not rounded: the final slice must close out the broker's charge.
+            return quantize_money(cost)
+        return quantize_money(cost * consumed / self.quantity)

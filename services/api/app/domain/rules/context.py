@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, time
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.domain.common.enums import Direction, SessionSegment
 
@@ -70,6 +71,10 @@ class TradeFacts:
     exit_price: Decimal | None = None
 
     entry_at: datetime | None = None
+    #: IANA zone of the instrument's exchange. Required to answer "what time was this
+    #: for the trader?" — ``entry_at`` is UTC, and a rule about the open means the
+    #: exchange's clock, not Greenwich's.
+    exchange_timezone: str | None = None
     entry_hour: int | None = None
     weekday: int | None = None
     session_segment: SessionSegment | None = None
@@ -99,6 +104,21 @@ class TradeFacts:
     daily_loss_limit: Decimal | None = None
 
 
+def _local_entry(facts: TradeFacts) -> datetime | None:
+    """Entry timestamp in the exchange's timezone, or ``None`` if it cannot be known.
+
+    An unknown or invalid zone returns ``None`` rather than raising: a stale IANA name
+    on one instrument should make time-of-day rules unevaluable for that instrument,
+    not fail the whole compliance run.
+    """
+    if facts.entry_at is None or facts.exchange_timezone is None:
+        return None
+    try:
+        return facts.entry_at.astimezone(ZoneInfo(facts.exchange_timezone))
+    except (ZoneInfoNotFoundError, ValueError):
+        return None
+
+
 def build_context(facts: TradeFacts) -> dict[str, Any]:
     """Flatten facts into the dictionary rules evaluate against.
 
@@ -118,8 +138,14 @@ def build_context(facts: TradeFacts) -> dict[str, Any]:
     put("entry_price", facts.entry_price)
     put("exit_price", facts.exit_price)
 
-    if facts.entry_at is not None:
-        context["entry_time"] = time(facts.entry_at.hour, facts.entry_at.minute)
+    # Entry time is the exchange's clock, never the server's and never UTC. A trader
+    # writing "no trades before 09:30" means the cash open, and reading the hour off a
+    # UTC timestamp would score a 09:30 New York entry as 14:30 — passing a rule it
+    # broke, or breaking one it passed. Without a known zone the field is omitted, so
+    # the rule reads as unevaluable rather than as a confident wrong answer.
+    local_entry = _local_entry(facts)
+    if local_entry is not None:
+        context["entry_time"] = time(local_entry.hour, local_entry.minute)
     put("entry_hour", facts.entry_hour)
     put("weekday", facts.weekday)
     put("session_segment", facts.session_segment.value if facts.session_segment else None)

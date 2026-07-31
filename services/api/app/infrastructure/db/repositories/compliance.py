@@ -67,6 +67,11 @@ class SqlAlchemyComplianceRepository:
         Loaded in one query rather than per trade: a year of trading is a handful of
         strategies and a few thousand trades, so the rule set is small, static within a
         run, and belongs in memory.
+
+        Superseded strategy versions are deliberately **included**. A trade taken under
+        version 1 has to keep being scored against version 1's rules — filtering to
+        active strategies here would silently rescore a trader's whole history against
+        rules that did not exist when they took the trades.
         """
         statement = (
             select(StrategyRule)
@@ -125,6 +130,7 @@ class SqlAlchemyComplianceRepository:
             select(
                 Trade,
                 Instrument.root_symbol,
+                Instrument.exchange_timezone,
                 Setup.name,
                 MarketCondition.name,
                 Account.max_daily_loss,
@@ -166,6 +172,7 @@ class SqlAlchemyComplianceRepository:
                     entry_price=trade.avg_entry_price,
                     exit_price=trade.avg_exit_price,
                     entry_at=trade.opened_at,
+                    exchange_timezone=exchange_timezone,
                     entry_hour=trade.entry_hour,
                     weekday=trade.entry_weekday,
                     session_segment=trade.session_segment,
@@ -174,8 +181,12 @@ class SqlAlchemyComplianceRepository:
                     target_price=trade.initial_target_price,
                     final_stop_price=trade.final_stop_price,
                     risk_amount=trade.planned_risk_amount,
-                    account_equity=equity.equity_at(trade.account_id, trade.opened_at)
-                    or starting_balance,
+                    # An explicit None check, not ``or``: an account whose equity is
+                    # exactly zero is blown, and falling back to its opening balance
+                    # would measure that trade's risk against money it no longer had.
+                    account_equity=_first_known(
+                        equity.equity_at(trade.account_id, trade.opened_at), starting_balance
+                    ),
                     planned_r_multiple=trade.planned_r_multiple,
                     net_pnl=trade.net_pnl,
                     r_multiple=trade.realized_r,
@@ -191,6 +202,7 @@ class SqlAlchemyComplianceRepository:
             for (
                 trade,
                 root_symbol,
+                exchange_timezone,
                 setup_name,
                 condition_name,
                 max_daily_loss,
@@ -343,6 +355,14 @@ class SqlAlchemyComplianceRepository:
             ],
         )
         return len(scores)
+
+
+def _first_known(*candidates: Decimal | None) -> Decimal | None:
+    """First candidate that is not ``None``, preserving a legitimate zero."""
+    for candidate in candidates:
+        if candidate is not None:
+            return candidate
+    return None
 
 
 class _EquityTimeline:

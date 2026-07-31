@@ -67,6 +67,15 @@ the daily series — that is the one prop firms enforce.
 Percentage drawdown is `null` when the preceding peak was not positive. A percentage
 from a peak of zero is meaningless.
 
+**Sign convention.** Summary depths — `max_drawdown`, `average_drawdown`,
+`current_drawdown` — are **positive magnitudes**. The per-point series
+(`EquityPoint.drawdown`, and the `drawdown` column on `equity_curve_points`) is
+**signed negative**, because it is a chart series drawn below the zero line. The two
+are deliberately different and must not be reconciled into one: a summary reporting
+`max_drawdown: 1200` beside `current_drawdown: -1200` describes a single situation with
+opposite signs, and anything comparing them ("are we at the worst point ever?") gets the
+answer backwards.
+
 ### Risk-adjusted
 
 **Sharpe and Sortino are computed on the daily series, never per trade.** A per-trade

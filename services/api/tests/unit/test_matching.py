@@ -167,6 +167,54 @@ def test_flip_allocates_commission_pro_rata(fill: ExecutionFactory, specs: dict)
     assert closed.commission + opened.commission == Decimal("14.00000000")
 
 
+def test_an_indivisible_cost_split_reconciles(fill: ExecutionFactory, specs: dict) -> None:
+    """Pins the exact shares when a fill's cost does not divide evenly across a flip.
+
+    The 3-lot sell carries $10 across a 2/1 split, so the shares are $6.66666667 and
+    $3.33333333 — the remainder lands on the final slice by construction rather than
+    being lost to independent rounding.
+    """
+    result = reconstruct_trades(
+        [
+            fill(Side.BUY, 2, "5000.00", minute=0, commission="4.00", fees="0.50"),
+            fill(Side.SELL, 3, "5004.00", minute=3, commission="10.00", fees="1.00"),
+        ],
+        specs,
+    )
+
+    closed, opened = result.trades
+    assert closed.commission == Decimal("10.66666667")  # 4.00 entry + 2/3 of the exit
+    assert opened.commission == Decimal("3.33333333")
+    assert closed.commission + opened.commission == Decimal("14.00000000")
+    assert closed.fees + opened.fees == Decimal("1.50000000")
+
+
+def test_costs_reconcile_across_a_chain_of_flips(
+    fill: ExecutionFactory, specs: dict
+) -> None:
+    """Summed allocations must equal the broker's charge exactly, flip after flip.
+
+    This is the sequence that exposed the original defect: allocating each slice with
+    an independently rounded ratio drifts, and the drift survives into the total.
+    Buy 1, sell 3 (flip short 2), buy 3 (flip long 1), sell 1 (flat) splits two fills
+    unevenly in opposite directions, and $1.00 per fill reconciled to $3.99999999.
+
+    A hundredth of a microcent is not money, but reconciliation against the broker's
+    statement is an *exact* comparison — it is what catches a genuine reconstruction
+    bug — and an assertion that has to carry a tolerance stops being able to do that.
+    """
+    fills = [
+        fill(Side.BUY, 1, "5000.00", minute=0, commission="1.00"),
+        fill(Side.SELL, 3, "5001.00", minute=1, commission="1.00"),
+        fill(Side.BUY, 3, "5002.00", minute=2, commission="1.00"),
+        fill(Side.SELL, 1, "5003.00", minute=3, commission="1.00"),
+    ]
+
+    result = reconstruct_trades(fills, specs)
+
+    assert sum(trade.commission for trade in result.trades) == Decimal("4.00000000")
+
+
 def test_commissions_and_fees_reduce_net_pnl(fill: ExecutionFactory, specs: dict) -> None:
     result = reconstruct_trades(
         [

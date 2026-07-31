@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import AsyncIterator
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from uuid import UUID
 
@@ -29,6 +29,7 @@ from app.domain.common.enums import (
     RuleType,
     TradeStatus,
 )
+from app.domain.rules.context import build_context
 from app.infrastructure.db.models.broker import Account, AccountBalanceSnapshot
 from app.infrastructure.db.models.catalog import RuleEvaluation
 from app.infrastructure.db.models.identity import User
@@ -326,6 +327,23 @@ async def test_equity_is_read_as_of_the_trade(
     # A snapshot older than the staleness window is not carried forward; the second
     # session is two days later, still inside it.
     assert trades[-1].facts.account_equity == Decimal("52000")
+
+
+async def test_the_exchange_timezone_reaches_the_rule_context(
+    session: AsyncSession, seeded: dict[str, UUID]
+) -> None:
+    """Time-of-day rules are only checkable because the instrument carries its zone.
+
+    The seed trades open at 14:30 UTC on a CME instrument, which is 08:30 in Chicago.
+    A repository that passed the raw UTC timestamp through would make every
+    time-of-day rule in the journal quietly wrong by the exchange's offset.
+    """
+    repository = SqlAlchemyComplianceRepository(session)
+    trades = await repository.load_trades(seeded["user_id"], max_sessions=90)
+
+    first = trades[0]
+    assert first.facts.exchange_timezone == "America/Chicago"
+    assert build_context(first.facts)["entry_time"] == time(8, 30)
 
 
 async def test_a_strategy_revision_creates_a_new_version(

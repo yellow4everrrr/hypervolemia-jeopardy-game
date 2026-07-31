@@ -54,7 +54,14 @@ Rules reference facts by name. The full list is served by
 | Context | `setup`, `market_condition`, `confidence`, `emotion` |
 | Session discipline | `trades_today`, `session_pnl_before`, `consecutive_losses`, `minutes_since_last_trade`, `is_after_daily_loss_limit` |
 
-Two of these deserve a note:
+Three of these deserve a note:
+
+**`entry_time`** is the **exchange's** clock, derived by converting the trade's UTC
+timestamp through the instrument's IANA zone — so a 09:30 New York entry reads as
+`09:30`, not `14:30`, and it tracks daylight saving. When the instrument has no usable
+zone the field is omitted, making time-of-day rules unevaluable rather than wrong by an
+offset. `entry_hour` is the same instant from the denormalised exchange-local column,
+and the two always agree.
 
 **`stop_widened`** is true when the final stop was further from entry than the initial
 one. Moving a stop *closer* is risk reduction and is not flagged; moving it further is

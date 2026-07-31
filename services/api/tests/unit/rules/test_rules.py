@@ -7,9 +7,10 @@ is what makes a compliance score mean anything.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time
 from decimal import Decimal
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -475,3 +476,104 @@ def test_unevaluable_trades_are_excluded_from_impact() -> None:
     assert impact.violations == 1
     assert impact.compliant_trades == 1
     assert impact.mean_pnl_when_followed == Decimal(100)
+
+
+def test_entry_time_is_the_exchange_clock_not_utc() -> None:
+    """A rule about the open means the exchange's clock.
+
+    Trades are stored in UTC, so reading the hour straight off `entry_at` reports a
+    09:30 New York entry as 14:30 — which passes "no trades before 09:30" for a trade
+    taken exactly at the open, and fails "no trades after 12:00" for one taken at
+    breakfast. Neither error is visible in the report: the rule simply returns the
+    wrong verdict with full confidence.
+    """
+    entry = datetime(2026, 3, 5, 9, 30, tzinfo=ZoneInfo("America/New_York"))
+    context = build_context(
+        TradeFacts(
+            direction=Direction.LONG,
+            entry_at=entry.astimezone(UTC),
+            exchange_timezone="America/New_York",
+        )
+    )
+
+    assert context["entry_time"] == time(9, 30)
+    assert parse({"field": "entry_time", "op": "gte", "value": "09:30"}).evaluate(
+        context
+    ).outcome is Outcome.PASS
+    assert parse({"field": "entry_time", "op": "lt", "value": "09:30"}).evaluate(
+        context
+    ).outcome is Outcome.FAIL
+
+
+def test_entry_time_agrees_with_entry_hour() -> None:
+    """Two fields describing the same instant must not disagree about the timezone.
+
+    `entry_hour` is denormalised as exchange-local by the ingestion pipeline. If
+    `entry_time` were derived from UTC, a single context would carry both 9 and 14 for
+    one trade, and which one a rule saw would depend on how it happened to be written.
+    """
+    entry = datetime(2026, 11, 3, 14, 45, tzinfo=ZoneInfo("America/Chicago"))
+    context = build_context(
+        TradeFacts(
+            direction=Direction.LONG,
+            entry_at=entry.astimezone(UTC),
+            exchange_timezone="America/Chicago",
+            entry_hour=14,
+        )
+    )
+
+    assert context["entry_time"].hour == context["entry_hour"] == 14
+
+
+def test_entry_time_is_omitted_when_the_zone_is_unknown() -> None:
+    """Better unevaluable than confidently wrong.
+
+    Without a zone there is no answer to "what time was this for the trader?", so the
+    field is absent and a rule against it reads as uncheckable — the same treatment a
+    missing stop gets.
+    """
+    facts = TradeFacts(
+        direction=Direction.LONG, entry_at=datetime(2026, 3, 5, 14, 30, tzinfo=UTC)
+    )
+
+    context = build_context(facts)
+
+    assert "entry_time" not in context
+    assert parse({"field": "entry_time", "op": "gte", "value": "09:30"}).evaluate(
+        context
+    ).outcome is Outcome.UNEVALUABLE
+
+
+def test_an_unusable_timezone_does_not_fail_the_run() -> None:
+    """A stale IANA name on one instrument must not take down a whole compliance run."""
+    context = build_context(
+        TradeFacts(
+            direction=Direction.LONG,
+            entry_at=datetime(2026, 3, 5, 14, 30, tzinfo=UTC),
+            exchange_timezone="Mars/Olympus_Mons",
+        )
+    )
+
+    assert "entry_time" not in context
+
+
+def test_entry_time_follows_daylight_saving() -> None:
+    """The same wall-clock entry sits at different UTC offsets across a DST boundary.
+
+    Deriving from a fixed offset would drift by an hour for half the year — enough to
+    move every trade in and out of an opening-range rule twice a year.
+    """
+    ny = ZoneInfo("America/New_York")
+    winter = datetime(2026, 1, 14, 9, 30, tzinfo=ny).astimezone(UTC)
+    summer = datetime(2026, 7, 14, 9, 30, tzinfo=ny).astimezone(UTC)
+
+    # Different UTC hours (14:30 vs 13:30) for the same local time.
+    assert winter.hour != summer.hour
+
+    for moment in (winter, summer):
+        context = build_context(
+            TradeFacts(
+                direction=Direction.LONG, entry_at=moment, exchange_timezone="America/New_York"
+            )
+        )
+        assert context["entry_time"] == time(9, 30)
