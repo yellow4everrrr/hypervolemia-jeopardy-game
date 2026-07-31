@@ -21,8 +21,8 @@ reviewable, ships tests and docs, and leaves `main` deployable.
 | 5 | **Frontend foundation** | Next.js + Clerk + design system, dashboard, trade blotter, trade detail. Bloomberg density with Linear polish. | Planned (after 12) |
 | 6 | **Trade replay UI** | Lightweight Charts playback: play/pause/seek/speed, entry/exit/stop/target markers, risk box, P&L animation, indicators, drawings. | Planned (after 12) |
 | 7 | **Strategy builder & compliance engine** | Turns subjective "did I follow my plan?" into a scored, rule-by-rule verdict on every imported trade. | ✅ Complete |
-| 8 | **Pattern & setup detection** | Unsupervised clustering + hypothesis testing to surface hidden edges and leaks; automatic setup classification. | ⏳ Next |
-| 9 | **AI coach layer** | Claude as head quant researcher, constrained by a strict evidence contract: it may only cite metrics returned by the analytics engine. | Planned |
+| 8 | **Pattern & setup detection** | Unsupervised clustering + hypothesis testing to surface hidden edges and leaks; automatic setup classification. | ✅ Complete |
+| 9 | **AI coach layer** | Claude as head quant researcher, constrained by a strict evidence contract: it may only cite metrics returned by the analytics engine. | ⏳ Next |
 | 10 | **What-if simulator** | Counterfactual re-simulation (different stop/target/RR/ATR trail/filters) with recomputed expectancy and significance. | Planned |
 | 11 | **ML layer** | Success probability, expected R, optimal stop/target models with proper walk-forward validation and calibration. | Planned |
 | 12 | **Reports & scheduling** | Daily → annual reports with leak quantification and expected annual improvement. | Planned |
@@ -208,6 +208,48 @@ Delivered:
 
 **Explicitly not in milestone 7:** automatic setup classification (milestone 8) and any
 natural-language commentary on a compliance report (milestone 9).
+
+---
+
+## Milestone 8 — delivered scope
+
+**Why this now.** The analytics engine answers questions that are put to it. This
+milestone asks the questions — it looks for leaks the trader has not thought to check
+for. It must precede the AI layer for the same reason milestone 3 did: a coach that can
+point at a specific quantified leak is giving evidence, and one that cannot is giving
+opinion.
+
+Delivered:
+
+- Seven **behavioural detectors** covering sequence-dependent leaks the segmentation cube
+  structurally cannot see: revenge trading, overtrading, trading while down, size
+  escalation, losing streaks, holding asymmetry, and opening-trade performance.
+- Deterministic **k-means** over a documented eight-feature trade space, in exact decimal
+  arithmetic, with k-means++ seeding and k chosen by silhouette.
+- A **null-reference structure test** for clustering: k-means partitions anything, so the
+  winning clustering must beat column-shuffled references before it is reported at all
+  ([ADR 0006](./adr/0006-pattern-detection.md)).
+- **One FDR family across the entire scan** — behavioural and cluster tests corrected
+  together, so adding a detector makes existing findings harder to establish.
+- Cluster descriptions in the trader's own vocabulary, and cluster-to-setup proposals
+  carrying per-trade confidence. Nothing is auto-applied.
+- Persistence of **every test performed**, not only the survivors, so recurrence is
+  falsifiable.
+- 40 new tests, led by a null battery: five seeds of pure noise through the full scan,
+  asserting nothing is found.
+
+**Two defects this milestone found in itself,** both invisible in the output and both
+producing confident, plausible findings — recorded here because they are the reason the
+null battery exists:
+
+1. A detector whose split was a function of the value it compared returned the minimum
+   possible p-value on 100% of noise samples, and — through the step-up FDR procedure —
+   dragged its honest neighbours over the significance line with it.
+2. A fixed silhouette threshold accepted the six-cluster partition k-means imposes on
+   uniformly random data.
+
+**Explicitly not in milestone 8:** natural-language interpretation of a pattern
+(milestone 9), and scheduled rescanning (milestone 13).
 
 ---
 

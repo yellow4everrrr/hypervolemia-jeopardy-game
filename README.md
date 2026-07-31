@@ -12,14 +12,14 @@ was not given is rejected before it reaches the trader.
 
 ## Status
 
-Milestones 1–3 of 13 are complete: foundation, Tradovate sync, and the analytics engine.
-See [`docs/roadmap.md`](docs/roadmap.md) for what each milestone delivers and why it
-exists in that order.
+Milestones 1–4, 7 and 8 of 13 are complete. The backend milestones (7–12) are being
+built before the frontend ones (5–6) — see [`docs/roadmap.md`](docs/roadmap.md) for what
+each delivers and why the order changed.
 
 | | |
 |---|---|
-| **Delivered** | Clean-architecture backend · FIFO trade reconstruction · 33-table Postgres/TimescaleDB schema · idempotent ingestion · Tradovate REST + WebSocket sync with cursor safety · institutional analytics with bootstrap intervals and FDR-controlled segmentation · FastAPI with Clerk auth · 406 tests · CI |
-| **Next** | Milestone 4 — market data and replay: TimescaleDB bar ingestion, MAE/MFE, replay windows, screenshot pipeline |
+| **Delivered** | Clean-architecture backend · FIFO trade reconstruction · 33-table Postgres/TimescaleDB schema · idempotent ingestion · Tradovate REST + WebSocket sync with cursor safety · institutional analytics with bootstrap intervals and FDR-controlled segmentation · bar ingestion, MAE/MFE and replay windows · rule-based compliance scoring · behavioural and cluster pattern detection · FastAPI with Clerk auth · 566 tests · CI |
+| **Next** | Milestone 9 — the AI coach layer, constrained by the evidence contract in ADR 0002 |
 
 ## Quick start
 
@@ -110,8 +110,10 @@ the migrations, and rolls back to base.
 - [ADR 0003](docs/adr/0003-broker-sync.md) — why the sync cursor never skips a fill
 - [ADR 0004](docs/adr/0004-analytics-honesty.md) — why unproven segments are never findings
 - [ADR 0005](docs/adr/0005-compliance-scoring.md) — why "unevaluable" is not a violation
+- [ADR 0006](docs/adr/0006-pattern-detection.md) — why a pattern must beat its own null
 - [Analytics](docs/analytics.md) — every statistic, its definition, and what it refuses to compute
 - [Compliance](docs/compliance.md) — the rule language, the scoring model, and the API
+- [Patterns](docs/patterns.md) — behavioural detectors, clustering, and what stops both inventing findings
 - [Tradovate integration](docs/tradovate-integration.md) — API specifics, auth, framing, known gaps
 
 ## Tech stack
