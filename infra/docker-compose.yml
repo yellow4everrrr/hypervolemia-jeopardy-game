@@ -1,0 +1,71 @@
+# Local development stack.
+#
+# TimescaleDB rather than plain Postgres, because the hypertable and compression
+# behaviour that production depends on should be exercised locally too — the migration
+# tolerates a server without the extension, but "works on my machine" should mean the
+# same storage engine.
+
+name: ledgerline
+
+services:
+  postgres:
+    image: timescale/timescaledb:2.17.2-pg16
+    environment:
+      POSTGRES_USER: ledgerline
+      POSTGRES_PASSWORD: ledgerline
+      POSTGRES_DB: ledgerline
+      # Sensible local tuning; production settings come from the managed provider.
+      TIMESCALEDB_TELEMETRY: "off"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ledgerline -d ledgerline"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7.4-alpine
+    # `--save ""` disables RDB snapshots: everything Redis holds here is a cache or a
+    # job queue that can be rebuilt, and durability would only cost latency.
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ../services/api
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      LEDGERLINE_ENVIRONMENT: local
+      LEDGERLINE_DATABASE_URL: postgresql+asyncpg://ledgerline:ledgerline@postgres:5432/ledgerline
+      LEDGERLINE_REDIS_URL: redis://redis:6379/0
+      LEDGERLINE_LOG_JSON: "false"
+      LEDGERLINE_AUTH_DEV_BYPASS: "true"
+      LEDGERLINE_CORS_ORIGINS: http://localhost:3000
+    ports:
+      - "8000:8000"
+    volumes:
+      # Bind-mounted for hot reload; the image still contains a complete copy so the
+      # same Dockerfile builds a deployable artifact.
+      - ../services/api/app:/srv/app:ro
+      - ../services/api/migrations:/srv/migrations:ro
+    command:
+      - sh
+      - -c
+      - "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+volumes:
+  postgres-data:
