@@ -217,20 +217,31 @@ def control_false_discovery_rate(
 
     Comparisons that could not be tested pass through untouched — they are not
     hypotheses, so they neither consume nor contribute to the error budget.
-    """
-    testable = [result for result in results if result.p_value is not None]
-    untestable = [result for result in results if result.p_value is None]
 
-    if not testable:
+    **The returned list is in the same order as the input**, which is load-bearing rather
+    than a convenience. BH works by ranking p-values, so the natural implementation
+    returns them sorted; every caller then has to remember to re-associate results with
+    the findings they belong to. Two did not, and the consequence is not a cosmetic
+    mix-up — a finding with p = 0.90 receives the adjusted p-value earned by an unrelated
+    finding with p = 0.001 and is published as significant. That is precisely the
+    manufactured discovery this function exists to prevent, produced by the mechanism
+    meant to prevent it, and invisible in any aggregate check. Sorting is therefore an
+    internal detail and the contract is positional.
+    """
+    indexed_testable = [
+        (index, result) for index, result in enumerate(results) if result.p_value is not None
+    ]
+
+    if not indexed_testable:
         return list(results)
 
-    ordered = sorted(testable, key=lambda result: result.p_value)  # type: ignore[arg-type,return-value]
+    ordered = sorted(indexed_testable, key=lambda item: item[1].p_value)  # type: ignore[arg-type,return-value]
     count = Decimal(len(ordered))
 
     adjusted: list[Decimal] = []
     with localcontext() as ctx:
         ctx.prec = PRECISION
-        for rank, result in enumerate(ordered, start=1):
+        for rank, (_, result) in enumerate(ordered, start=1):
             assert result.p_value is not None
             adjusted.append(min(Decimal(1), result.p_value * count / Decimal(rank)))
 
@@ -239,8 +250,9 @@ def control_false_discovery_rate(
         for index in range(len(adjusted) - 2, -1, -1):
             adjusted[index] = min(adjusted[index], adjusted[index + 1])
 
-    corrected = [
-        ComparisonResult(
+    corrected = list(results)
+    for (position, result), value in zip(ordered, adjusted, strict=True):
+        corrected[position] = ComparisonResult(
             label_a=result.label_a,
             label_b=result.label_b,
             mean_a=result.mean_a,
@@ -254,9 +266,7 @@ def control_false_discovery_rate(
             adjusted_p_value=value,
             undefined_reason=result.undefined_reason,
         )
-        for result, value in zip(ordered, adjusted, strict=True)
-    ]
-    return [*corrected, *untestable]
+    return corrected
 
 
 @dataclass(frozen=True, slots=True)

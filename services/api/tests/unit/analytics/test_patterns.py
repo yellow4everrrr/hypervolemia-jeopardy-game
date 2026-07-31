@@ -538,3 +538,30 @@ def _as_dict(trade: TradeRecord) -> dict:
             "mfe_r",
         )
     }
+
+
+def test_each_finding_keeps_its_own_adjusted_p_value() -> None:
+    """Guards against the correction attaching q-values to the wrong findings.
+
+    Benjamini–Hochberg only ever scales a p-value upward, so for every finding the
+    adjusted value must be at least its own raw one. If the scan pairs findings with
+    somebody else's q-value, a high-p detector receives a low-q and this fails.
+
+    That is not a cosmetic mix-up. It shipped, and its effect was to publish a
+    pure-noise detector as significant using the significance earned by an unrelated
+    one — manufactured by the exact mechanism built to prevent manufacturing.
+    """
+    report = discover_patterns(build_trades(400, 11, leak_after=5), FAST)
+
+    tested = [
+        item
+        for item in report.behaviours
+        if item.comparison is not None and item.comparison.p_value is not None
+    ]
+    assert tested, "the scan produced no testable behaviour to check"
+
+    for finding in tested:
+        comparison = finding.comparison
+        assert comparison is not None
+        assert comparison.adjusted_p_value is not None, finding.kind
+        assert comparison.adjusted_p_value >= comparison.p_value, finding.kind

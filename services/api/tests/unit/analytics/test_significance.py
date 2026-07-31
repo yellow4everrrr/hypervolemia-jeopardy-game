@@ -248,3 +248,106 @@ def test_edge_test_refuses_a_tiny_sample() -> None:
     assert result.p_value is None
     assert not result.has_demonstrable_edge
     assert "at least" in (result.undefined_reason or "")
+
+
+class TestAdjustmentOrdering:
+    """The adjusted p-value must come back attached to the finding that earned it.
+
+    Benjamini–Hochberg ranks p-values, so the natural implementation returns them
+    sorted. Callers that zip the result back against their own findings positionally
+    then pair every finding with somebody else's q-value. This is not a cosmetic
+    mix-up: a pure-noise comparison inherits the significance of the strongest real
+    one and is published as a finding.
+
+    It shipped in two places — the pattern scan and the what-if sweep — and no
+    aggregate check caught it, because on an all-noise sample every q-value is high
+    however they are shuffled, and on a sample with one real effect the count of
+    significant findings is still one.
+    """
+
+    def _result(self, label: str, p_value: str) -> ComparisonResult:
+        return ComparisonResult(
+            label_a=label,
+            label_b="baseline",
+            mean_a=Decimal(1),
+            mean_b=Decimal(0),
+            difference=Decimal(1),
+            sample_a=50,
+            sample_b=50,
+            p_value=Decimal(p_value),
+            effect_size=Decimal("0.1"),
+            permutations=1000,
+        )
+
+    def test_results_come_back_in_input_order(self) -> None:
+        """Deliberately unsorted input, which is how a real scan arrives."""
+        comparisons = [
+            self._result("noise", "0.90"),
+            self._result("real", "0.001"),
+            self._result("middling", "0.40"),
+        ]
+
+        adjusted = control_false_discovery_rate(comparisons)
+
+        assert [item.label_a for item in adjusted] == ["noise", "real", "middling"]
+
+    def test_a_noise_result_does_not_inherit_a_real_ones_significance(self) -> None:
+        """The failure this test exists for, asserted at the level that matters."""
+        comparisons = [
+            self._result("noise", "0.90"),
+            self._result("real", "0.001"),
+            self._result("middling", "0.40"),
+        ]
+
+        by_label = {item.label_a: item for item in control_false_discovery_rate(comparisons)}
+
+        assert by_label["real"].is_significant
+        assert not by_label["noise"].is_significant
+        assert not by_label["middling"].is_significant
+
+    def test_every_adjusted_value_belongs_to_its_own_p_value(self) -> None:
+        """A q-value is never below the raw p-value it was computed from.
+
+        BH only ever scales a p-value upward, so this holds for every result whatever
+        the input order — and fails immediately if the pairing is scrambled.
+        """
+        comparisons = [
+            self._result(name, value)
+            for name, value in (
+                ("e", "0.80"),
+                ("a", "0.01"),
+                ("d", "0.60"),
+                ("b", "0.02"),
+                ("c", "0.30"),
+            )
+        ]
+
+        for item in control_false_discovery_rate(comparisons):
+            assert item.p_value is not None and item.adjusted_p_value is not None
+            assert item.adjusted_p_value >= item.p_value
+
+    def test_untestable_results_keep_their_position(self) -> None:
+        """A comparison with no p-value is not a hypothesis, but it is still a row.
+
+        Moving it to the end of the list shifts every finding after it by one in any
+        caller that pairs positionally.
+        """
+        untestable = ComparisonResult(
+            label_a="thin",
+            label_b="baseline",
+            mean_a=None,
+            mean_b=None,
+            difference=None,
+            sample_a=2,
+            sample_b=1,
+            p_value=None,
+            effect_size=None,
+            permutations=0,
+            undefined_reason="too few trades",
+        )
+        comparisons = [self._result("first", "0.30"), untestable, self._result("last", "0.02")]
+
+        adjusted = control_false_discovery_rate(comparisons)
+
+        assert [item.label_a for item in adjusted] == ["first", "thin", "last"]
+        assert adjusted[1].adjusted_p_value is None

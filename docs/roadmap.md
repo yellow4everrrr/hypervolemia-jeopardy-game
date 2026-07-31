@@ -25,8 +25,8 @@ reviewable, ships tests and docs, and leaves `main` deployable.
 | 9 | **AI coach layer** | Claude as head quant researcher, constrained by a strict evidence contract: it may only cite metrics returned by the analytics engine. | ✅ Complete |
 | 10 | **What-if simulator** | Counterfactual re-simulation (different stop/target/RR/ATR trail/filters) with recomputed expectancy and significance. | ✅ Complete |
 | 11 | **ML layer** | Success probability and expected R with walk-forward validation, calibration and a refusal-to-serve gate. Optimal stop/target deferred — see below. | ✅ Complete |
-| 12 | **Reports & scheduling** | Daily → annual reports with leak quantification and expected annual improvement. | ⏳ Next |
-| 13 | **Hardening & scale** | Partitioning, continuous aggregates, observability, rate limits, RLS, deployment. | Planned |
+| 12 | **Reports & scheduling** | Daily → annual reports with deduplicated leak quantification and tested period-over-period comparison. | ✅ Complete |
+| 13 | **Hardening & scale** | Partitioning, continuous aggregates, observability, rate limits, RLS, deployment. | ⏳ Next |
 
 ### A note on ordering
 
@@ -394,6 +394,69 @@ size and target encoding leaks unless recomputed per fold — segmentation alrea
 setups with a proper test); and optimal stop/target models, which need a grid search
 selected on training folds and measured out of sample. Shipping the naive version of the
 latter would undo ADR 0008.
+
+---
+
+## Milestone 12 — delivered scope
+
+**Why this now.** Every earlier surface is something a trader *interrogates*. A report is
+something a trader is *told* — it arrives on a schedule, carries a period in its title, and
+is read as settled fact. Every qualification the engines attach can survive to this layer
+and then be dropped in the last step, by code doing nothing more suspicious than formatting
+a number.
+
+Delivered:
+
+- Calendar period arithmetic (daily → annual) resolved through `session_date`, so a 23:30
+  UTC Sunday fill lands in the right week.
+- Report composition from the analytics engine, pattern scan and compliance engine. The
+  builder computes nothing itself; a reporting layer that re-derives numbers ends up
+  disagreeing with the dashboard by a trade, with nothing to say which is right.
+- **Deduplicated leak attribution** — the headline figure, and the one most easily inflated.
+- **Period-over-period comparison** gated on a permutation test, FDR-corrected as one
+  family.
+- Sections that refuse individually, with reasons; `draws_conclusions` separate from having
+  data; empty periods reported as flat rather than skipped.
+- Idempotent, oldest-first scheduling keyed to the table's unique constraint, capped at 25
+  reports per run.
+- 94 new tests.
+
+**Summing detector estimates was wrong by more than a factor.** ADR 0006 already recorded
+that detectors overlap — a trader down on the day, late in the session, after two losses is
+caught by three at once — and milestone 8 handled it by ranking instead of summing. A report
+cannot duck it, because the figure it exists to produce *is* the sum. Measured on real
+scans the naive sum overstates by **1.6× to 1.9×**, and on one sample it produced
+**−$68,952** of leaks against **−$57,417** of total losses across every losing trade: not
+inflated but impossible. Cost is now attributed per trade, a trade claimed by several leaks
+keeps the largest single claim, and both figures are returned so the gap stays visible.
+
+**A period-over-period arrow is noise with a direction.** On twenty trades a month the win
+rate moves four or five points between any two months of an unchanged process. Changes are
+permutation-tested and corrected as one family, which means almost nothing is established on
+a monthly report — the accurate result rather than a missing feature.
+
+**This milestone found a shipped bug in milestones 8 and 10.**
+`control_false_discovery_rate` returned results sorted by p-value while the pattern scan and
+the what-if sweep zipped them back positionally, so a finding with p = 0.90 received the
+q-value earned by one with p = 0.001 and was published as significant — a manufactured
+discovery produced by the mechanism built to prevent manufactured discoveries. No existing
+test could see it: on all-noise samples every q-value is high however they are shuffled, and
+on a sample with one real effect the count of findings is still one. The contract is now
+positional, with regression tests at the helper and both call sites.
+
+Fixing it also **corrected a milestone 10 claim**. With the ordering right, one M10
+null-battery seed began establishing a scenario on noise. The engine was not at fault —
+2 of 25 noise sweeps establish something, about 8%, which is what a 5% FDR bound looks like.
+The test was wrong to demand zero: Benjamini–Hochberg bounds the expected *proportion* of
+false discoveries and never promises none. That test now asserts the property worth
+asserting — that the correction is what suppresses the raw significance.
+
+The reasoning is recorded in [ADR 0010](./adr/0010-periodic-reports.md), and the working
+guide is [docs/reports.md](./reports.md).
+
+**Explicitly not in milestone 12:** the AI narrative layer over reports, which reuses the
+milestone 9 placeholder contract unchanged and belongs with the frontend that renders it;
+and real scheduled execution, which needs the worker chosen in milestone 13.
 
 ---
 

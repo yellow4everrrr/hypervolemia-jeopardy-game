@@ -112,6 +112,11 @@ class BehaviourFinding:
     #: Whether a larger value is the better outcome. False for holding time, where the
     #: comparison is "losers are held longer" and longer is the problem.
     higher_is_better: bool = True
+    #: The trades this behaviour was present on. Carried because detectors overlap — a
+    #: trader who is down on the day, late in the session, after two losses is caught by
+    #: three detectors at once — and summing their costs would bill the same dollars
+    #: three times. Reports deduplicate through this set rather than adding estimates.
+    affected_trade_ids: tuple[str, ...] = ()
 
     @property
     def difference(self) -> Decimal | None:
@@ -299,6 +304,7 @@ def _finding(
         description=description,
         affected=len(present),
         unaffected=len(absent),
+        affected_trade_ids=tuple(str(trade.trade_id) for trade in present),
         mean_when_present=mean_present,
         mean_when_absent=mean_absent,
         expectancy_when_present=expectancy,
