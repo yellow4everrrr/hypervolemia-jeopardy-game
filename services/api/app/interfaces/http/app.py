@@ -13,7 +13,7 @@ from app.core.logging import configure_logging, get_logger
 from app.infrastructure.db.session import dispose_engine
 from app.interfaces.http.errors import register_error_handlers
 from app.interfaces.http.middleware import RequestContextMiddleware
-from app.interfaces.http.routers import analytics, broker, health, trades
+from app.interfaces.http.routers import analytics, broker, health, replay, trades
 
 logger = get_logger(__name__)
 
@@ -69,5 +69,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(trades.router, prefix=f"{settings.api_prefix}/v1")
     app.include_router(broker.router, prefix=f"{settings.api_prefix}/v1")
     app.include_router(analytics.router, prefix=f"{settings.api_prefix}/v1")
+    app.include_router(replay.router, prefix=f"{settings.api_prefix}/v1")
 
     return app

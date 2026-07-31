@@ -77,6 +77,12 @@ exclude = "^(migrations/versions/|tests/)"
 module = ["tests.*"]
 ignore_errors = true
 
+# aioboto3 ships no type stubs. The S3 store sits behind a fully typed protocol, so
+# writing stubs for a swappable SDK would be maintenance without benefit.
+[[tool.mypy.overrides]]
+module = ["aioboto3", "aioboto3.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
