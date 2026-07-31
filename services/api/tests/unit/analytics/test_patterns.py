@@ -377,7 +377,10 @@ def test_missing_features_are_dropped_rather_than_imputed() -> None:
 
     assert "mae_r" in matrix.dropped_features
     assert "mfe_r" in matrix.dropped_features
-    assert "capture_efficiency" in matrix.dropped_features
+    # `capture_efficiency` was asserted here too, until it was removed from the feature
+    # set for reading the outcome (ADR 0015). A feature that does not exist cannot be
+    # dropped, and nothing about the missing-value rule this test covers depended on it.
+    assert "capture_efficiency" not in {feature.name for feature in matrix.features}
     # No trade is lost: the features went, the sample stayed.
     assert matrix.size == 120
     assert matrix.coverage == 1
