@@ -23,8 +23,8 @@ reviewable, ships tests and docs, and leaves `main` deployable.
 | 7 | **Strategy builder & compliance engine** | Turns subjective "did I follow my plan?" into a scored, rule-by-rule verdict on every imported trade. | ✅ Complete |
 | 8 | **Pattern & setup detection** | Unsupervised clustering + hypothesis testing to surface hidden edges and leaks; automatic setup classification. | ✅ Complete |
 | 9 | **AI coach layer** | Claude as head quant researcher, constrained by a strict evidence contract: it may only cite metrics returned by the analytics engine. | ✅ Complete |
-| 10 | **What-if simulator** | Counterfactual re-simulation (different stop/target/RR/ATR trail/filters) with recomputed expectancy and significance. | ⏳ Next |
-| 11 | **ML layer** | Success probability, expected R, optimal stop/target models with proper walk-forward validation and calibration. | Planned |
+| 10 | **What-if simulator** | Counterfactual re-simulation (different stop/target/RR/ATR trail/filters) with recomputed expectancy and significance. | ✅ Complete |
+| 11 | **ML layer** | Success probability, expected R, optimal stop/target models with proper walk-forward validation and calibration. | ⏳ Next |
 | 12 | **Reports & scheduling** | Daily → annual reports with leak quantification and expected annual improvement. | Planned |
 | 13 | **Hardening & scale** | Partitioning, continuous aggregates, observability, rate limits, RLS, deployment. | Planned |
 
@@ -288,6 +288,58 @@ Delivered:
 **Explicitly not in milestone 9:** `ai_recommendations.expected_improvement` stays empty
 until the what-if simulator fills it. The model never writes an expected-improvement
 figure — that was ADR 0002's fourth mechanism and it remains intact.
+
+---
+
+## Milestone 10 — delivered scope
+
+**Why this now.** It closes ADR 0002's fourth mechanism. The coach can say a rule is
+costing the trader money; until this milestone nothing could compute what changing it
+would be worth, and `ai_recommendations.expected_improvement` sat empty by design rather
+than by omission.
+
+Delivered:
+
+- Counterfactual re-pricing over stop, target, session-cap, losing-streak and
+  hour filters, walked in session order because the filters are sequence-dependent.
+- A skipped trade advances neither the session counter nor the losing streak — the
+  counterfactual trader never took it, and advancing them would simulate someone who
+  took the trade and ignored the result.
+- Trades the scenario cannot apply to are marked **inapplicable and excluded**, with
+  `coverage` reporting the fraction actually simulated. Counting them as unchanged
+  would dilute every effect toward zero and make each counterfactual look safe.
+- The whole sweep FDR-corrected as one family; `best` returns the largest *established*
+  improvement, never the largest improvement.
+- `POST /simulator/quantify` fills `expected_improvement` from a real re-simulation,
+  and writes an explicit non-result with its reason when it cannot.
+- 32 new tests.
+
+**Choosing the null took three attempts**, and the first two each produced confident,
+wrong findings — recorded here because the reasoning generalises:
+
+1. A **two-sample permutation test** treats baseline and simulated as independent draws.
+   They are the same trades measured twice, so pooling them inflates the reference
+   variance with duplicates the design never contained.
+2. A **sign-flip paired test** assumes each difference's sign is arbitrary under the
+   null. A 2R target deterministically produces its deltas, so that null is trivially
+   false the moment the rule touches one trade — the test then returns "significant" for
+   every scenario, which is no information.
+3. A **bootstrap of the per-trade deltas** asks the question actually being posed: would
+   this improvement survive a different sample of trades? It is what caught a scenario
+   reporting a $1 difference over 240 trades as significant.
+
+Two synthetic-data generators also had to be discarded before the null battery was
+honest — one allowed a losing trade to record an impossible favourable excursion, the
+other made adverse excursion a function of the outcome so that tightening the stop was
+guaranteed to help. The battery now uses a driftless random walk, where the optional
+stopping theorem says no exit rule can have an edge.
+
+The reasoning is recorded in
+[ADR 0008](./adr/0008-counterfactual-simulation.md), and the working guide is
+[docs/what-if.md](./what-if.md).
+
+**Explicitly not in milestone 10:** ATR-based trailing stops, which need bar-by-bar
+paths rather than the excursion summary; and portfolio-level simulation across accounts.
 
 ---
 

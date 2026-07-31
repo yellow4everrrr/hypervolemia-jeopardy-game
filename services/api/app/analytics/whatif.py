@@ -32,14 +32,9 @@ from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from typing import Any
 
-from app.analytics.montecarlo import DEFAULT_SEED, bootstrap_mean
-from app.analytics.performance import summarise_pnl
-from app.analytics.significance import (
-    ComparisonResult,
-    compare_samples,
-    control_false_discovery_rate,
-)
-from app.analytics.statistics import mean
+from app.analytics.montecarlo import DEFAULT_ITERATIONS, DEFAULT_SEED, bootstrap_mean
+from app.analytics.significance import ComparisonResult, control_false_discovery_rate
+from app.analytics.statistics import mean, stdev
 from app.analytics.types import MIN_SAMPLE, Estimate, Interval, Reliability, TradeRecord
 
 #: Bumped whenever the re-pricing logic changes, so a stored simulation records which
@@ -117,6 +112,10 @@ class SimulationResult:
     simulated_expectancy: Estimate
     trades: list[SimulatedTrade] = field(default_factory=list)
     comparison: ComparisonResult | None = None
+    #: Bootstrap interval on the *per-trade* difference. The primary evidence: an
+    #: interval spanning zero means resampling this history can produce an improvement
+    #: or a loss, whatever the headline total says.
+    delta_interval: Interval | None = None
 
     @property
     def repriced(self) -> int:
@@ -162,14 +161,23 @@ class SimulationResult:
     def is_actionable(self) -> bool:
         """Whether this is a finding rather than an arithmetic exercise.
 
-        Needs a testable sample, a significant difference after correcting the whole
-        sweep, and — the condition that catches most spurious winners — coverage high
-        enough that the result describes the trader's actual history rather than a
-        third of it.
+        Four conditions, and the interval is the one that does most of the work.
+
+        A scenario that repriced a single trade out of 240 can produce a consistent
+        sign and a tiny p-value while moving total P&L by a dollar. The bootstrap
+        interval on the per-trade difference catches exactly that: resample the history
+        and the improvement vanishes. This is the same bar
+        :class:`app.analytics.segmentation.Segment` and
+        :class:`app.analytics.discovery.ClusterFinding` clear, and for the same reason.
+
+        Coverage matters too — a counterfactual applied to a third of the sample
+        describes a subset, not this trader's history.
         """
         if self.reliability is not Reliability.RELIABLE:
             return False
         if self.coverage is None or self.coverage < Decimal("0.5"):
+            return False
+        if self.delta_interval is None or not self.delta_interval.excludes_zero:
             return False
         return bool(self.comparison and self.comparison.is_significant)
 
@@ -192,6 +200,11 @@ class SimulationResult:
             "coverage": str(self.coverage) if self.coverage is not None else None,
             "reliability": self.reliability.value,
             "is_actionable": self.is_actionable,
+            "delta_interval": (
+                [str(self.delta_interval.low), str(self.delta_interval.high)]
+                if self.delta_interval is not None
+                else None
+            ),
             "p_value": (
                 str(self.comparison.p_value)
                 if self.comparison and self.comparison.p_value is not None
@@ -266,16 +279,10 @@ def simulate(
         if item.counts_toward_pnl and item.simulated_pnl is not None
     ]
 
-    comparison: ComparisonResult | None = None
-    if len(baseline_values) >= MIN_SAMPLE and len(simulated_values) >= MIN_SAMPLE:
-        kwargs: dict[str, Any] = {
-            "label_a": "simulated",
-            "label_b": "baseline",
-            "seed": seed,
-        }
-        if permutations is not None:
-            kwargs["permutations"] = permutations
-        comparison = compare_samples(simulated_values, baseline_values, **kwargs)
+    deltas = [_delta(item) for item in simulated if item.outcome != "inapplicable"]
+    comparison, delta_interval = _test_difference(
+        deltas, seed=seed, iterations=permutations or DEFAULT_ITERATIONS
+    )
 
     return SimulationResult(
         scenario=scenario,
@@ -285,7 +292,89 @@ def simulate(
         simulated_expectancy=_expectancy(simulated_values, seed),
         trades=simulated,
         comparison=comparison,
+        delta_interval=delta_interval,
     )
+
+
+def _test_difference(
+    deltas: Sequence[Decimal], *, seed: int, iterations: int
+) -> tuple[ComparisonResult | None, Interval | None]:
+    """Is the improvement robust to which trades happened to occur?
+
+    Choosing the null here is the whole inferential question, and the obvious choices
+    are both wrong.
+
+    A **two-sample permutation test** treats baseline and simulated as independent
+    draws. They are not — they are the same trades measured twice, most of them
+    identical on both sides, so pooling them inflates the reference variance with
+    duplicates the design never contained.
+
+    A **sign-flip paired test** assumes the sign of each difference is arbitrary under
+    the null. It is not: a 2R target deterministically produces the deltas it produces.
+    That null is trivially false the moment the rule touches a single trade, so the test
+    returns "significant" for any scenario that changes anything at all — which is
+    every scenario, and therefore no information.
+
+    The question a trader is actually asking is whether the improvement would survive a
+    *different sample of trades*. So the deltas are bootstrapped: resample trades with
+    replacement, recompute the mean difference, and ask how often the sign flips. An
+    improvement driven by two lucky trades collapses under resampling; one spread across
+    the history does not.
+    """
+    if len(deltas) < MIN_SAMPLE:
+        return None, None
+
+    observed = mean(deltas)
+    if observed is None:  # pragma: no cover — guarded above
+        return None, None
+
+    result = bootstrap_mean(deltas, iterations=iterations, seed=seed)
+    if result is None:  # pragma: no cover — sample size guarded above
+        return None, None
+
+    # Two-sided bootstrap p-value from the share of resamples landing on the wrong side
+    # of zero. Clamped to a floor of 1/iterations rather than allowed to reach zero:
+    # a finite number of resamples can never rule chance out entirely, and p = 0 would
+    # overstate what was measured.
+    below = result.proportion_at_or_below_zero
+    p_value = min(
+        Decimal(1),
+        max(
+            Decimal(2) * min(below, Decimal(1) - below),
+            Decimal(1) / Decimal(iterations),
+        ),
+    )
+
+    spread = stdev(deltas)
+    comparison = ComparisonResult(
+        label_a="simulated",
+        label_b="baseline",
+        mean_a=observed,
+        mean_b=Decimal(0),
+        difference=observed,
+        sample_a=len(deltas),
+        sample_b=len(deltas),
+        p_value=p_value,
+        # Cohen's d for a paired design: the mean difference in units of its own
+        # spread, not of a pooled between-group spread.
+        effect_size=(observed / spread) if spread else None,
+        permutations=result.iterations,
+    )
+    return comparison, result.interval
+
+
+def _delta(item: SimulatedTrade) -> Decimal:
+    """How much this trade's contribution changed under the scenario.
+
+    A skipped trade contributes ``-net_pnl``: the counterfactual trader never took it,
+    so its result is removed from the total. Treating a skip as a zero delta would say
+    that not taking a losing trade changed nothing.
+    """
+    if item.outcome == "skipped":
+        return -item.original.net_pnl
+    if item.simulated_pnl is None:  # pragma: no cover — inapplicable is filtered out
+        return Decimal(0)
+    return item.simulated_pnl - item.original.net_pnl
 
 
 def _filter_reason(

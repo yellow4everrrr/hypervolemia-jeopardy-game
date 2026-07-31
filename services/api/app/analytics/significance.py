@@ -315,3 +315,4 @@ def test_for_edge(
         interval_low=result.interval.low,
         interval_high=result.interval.high,
     )
+

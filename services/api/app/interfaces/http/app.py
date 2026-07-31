@@ -20,6 +20,7 @@ from app.interfaces.http.routers import (
     health,
     patterns,
     replay,
+    simulator,
     strategies,
     trades,
 )
@@ -83,5 +84,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(strategies.compliance_router, prefix=f"{settings.api_prefix}/v1")
     app.include_router(patterns.router, prefix=f"{settings.api_prefix}/v1")
     app.include_router(coach.router, prefix=f"{settings.api_prefix}/v1")
+    app.include_router(simulator.router, prefix=f"{settings.api_prefix}/v1")
 
     return app
