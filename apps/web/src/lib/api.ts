@@ -98,5 +98,6 @@ export const keys = {
   reports: (type?: string) => ["reports", type ?? "all"] as const,
   models: (head: string) => ["models", head] as const,
   jobs: (state?: string) => ["jobs", state ?? "all"] as const,
+  strategies: () => ["strategies"] as const,
   queue: () => ["jobs", "queue"] as const,
 };

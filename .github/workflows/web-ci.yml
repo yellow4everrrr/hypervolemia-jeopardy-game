@@ -1,0 +1,176 @@
+name: Web CI
+
+# The frontend had no CI at all while thirteen milestones shipped. Every check below was
+# being run by hand, which means it was being run when someone remembered.
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "apps/web/**"
+      - "services/api/**"
+      - ".github/workflows/web-ci.yml"
+  pull_request:
+    paths:
+      - "apps/web/**"
+      - "services/api/**"
+      - ".github/workflows/web-ci.yml"
+
+concurrency:
+  group: web-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  quality:
+    name: Type-check, lint, unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm run test
+
+  smoke:
+    name: Every route renders against a real API
+    runs-on: ubuntu-latest
+
+    # The job the frontend most needed and least had. Six defects shipped green because
+    # nothing ever loaded a page against a real API: a crashed route, three silently blank
+    # blotter columns, an empty replay chart, a placeholder dashboard, twenty-six-digit
+    # decimals, and a self-contradicting leak summary. Every one of them was invisible to
+    # tsc, eslint and vitest, and obvious within seconds of opening the page.
+    #
+    # It runs on `services/api/**` changes too, because that is the side the contract
+    # usually breaks from: renaming a response field is a green backend change that blanks
+    # a column nobody is watching.
+    services:
+      postgres:
+        image: timescale/timescaledb:2.17.2-pg16
+        env:
+          POSTGRES_USER: ledgerline
+          POSTGRES_PASSWORD: ledgerline
+          POSTGRES_DB: ledgerline
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ledgerline"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      LEDGERLINE_ENVIRONMENT: local
+      LEDGERLINE_AUTH_DEV_BYPASS: "true"
+      LEDGERLINE_DATABASE_URL: postgresql+asyncpg://ledgerline:ledgerline@localhost:5432/ledgerline
+      LEDGERLINE_CORS_ORIGINS: '["http://127.0.0.1:3000","http://localhost:3000"]'
+      NEXT_PUBLIC_API_BASE: http://127.0.0.1:8000/api/v1
+      NEXT_PUBLIC_DEV_USER: demo
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: services/api/pyproject.toml
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install the API
+        working-directory: services/api
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Migrate and seed a demo history
+        working-directory: services/api
+        # The same script a developer runs, not a CI-only fixture. A separate seeding path
+        # would drift from the one people actually look at, and the point of this job is to
+        # exercise what a reviewer sees.
+        run: |
+          alembic upgrade head
+          python -m app.scripts.seed_instruments
+          python -m app.scripts.seed_demo
+
+      - name: Start the API
+        working-directory: services/api
+        run: |
+          nohup python -m uvicorn --factory app.interfaces.http.app:create_app \
+            --host 127.0.0.1 --port 8000 > /tmp/api.log 2>&1 &
+          for _ in $(seq 1 40); do
+            if curl -sf -H 'X-Debug-User: demo' http://127.0.0.1:8000/api/v1/trades > /dev/null; then
+              echo "API is up"; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::the API did not start"; cat /tmp/api.log; exit 1
+
+      - name: Install the web app
+        working-directory: apps/web
+        run: npm ci
+
+      - name: Install the browser
+        working-directory: apps/web
+        run: npx playwright install --with-deps chromium
+
+      - name: Build and start the web app
+        working-directory: apps/web
+        # A production build rather than `next dev`: the dev server's HMR and lazy
+        # compilation make the first load of each route slow and occasionally flaky, and
+        # the built bundle is what actually ships.
+        run: |
+          npm run build
+          nohup npx next start -H 127.0.0.1 -p 3000 > /tmp/web.log 2>&1 &
+          for _ in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:3000/ > /dev/null; then
+              echo "web is up"; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::the web app did not start"; cat /tmp/web.log; exit 1
+
+      - name: Smoke every route
+        working-directory: apps/web
+        run: npm run smoke
+
+      - name: Server logs on failure
+        if: failure()
+        run: |
+          echo "--- api ---"; tail -200 /tmp/api.log || true
+          echo "--- web ---"; tail -200 /tmp/web.log || true
+
+      - name: Failure screenshots and traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-failures
+          path: apps/web/test-results/
+          retention-days: 7
+          if-no-files-found: ignore

@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.ids import uuid7
 from app.domain.trading.execution import Execution as DomainExecution
+from app.infrastructure.db.bulk import batched
 from app.infrastructure.db.models.instruments import Instrument
 from app.infrastructure.db.models.trading import Execution as ExecutionRow
 
@@ -78,13 +79,21 @@ class SqlAlchemyExecutionRepository:
             for execution in executions
         ]
 
-        stmt = (
-            insert(ExecutionRow)
-            .values(rows)
-            .on_conflict_do_nothing(constraint="uq_executions_account_broker_execution")
-            .returning(ExecutionRow.id)
-        )
-        return len((await self._session.execute(stmt)).scalars().all())
+        # Batched: twelve columns puts the bind-parameter ceiling at ~2,730 rows, so a
+        # single broker sync importing three thousand fills failed outright. See
+        # `app.infrastructure.db.bulk`.
+        inserted = 0
+        for chunk in batched(rows):
+            stmt = (
+                insert(ExecutionRow)
+                .values(chunk)
+                .on_conflict_do_nothing(
+                    constraint="uq_executions_account_broker_execution"
+                )
+                .returning(ExecutionRow.id)
+            )
+            inserted += len((await self._session.execute(stmt)).scalars().all())
+        return inserted
 
     async def ids_by_broker_id(
         self, account_id: UUID, broker_execution_ids: Sequence[str]

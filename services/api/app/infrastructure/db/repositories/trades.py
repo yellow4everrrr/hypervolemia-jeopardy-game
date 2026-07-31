@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.ids import uuid7
 from app.domain.common.enums import TradeStatus
 from app.domain.trading.trade import ReconstructedTrade
+from app.infrastructure.db.bulk import batched
 from app.infrastructure.db.mappers import calendar_from_row, trade_legs_to_rows, trade_to_columns
 from app.infrastructure.db.models.instruments import Instrument
 from app.infrastructure.db.models.trading import Trade as TradeRow
@@ -134,8 +135,11 @@ class SqlAlchemyTradeRepository:
                     execution_ids=execution_ids,
                 )
             )
-        if rows:
-            await self._session.execute(insert(TradeExecution).values(rows))
+        # Batched for the same reason as every other bulk insert here: a reconstruction
+        # run over an imported history produces one row per leg per trade, and one
+        # statement stops being legal a few thousand legs in.
+        for chunk in batched(rows):
+            await self._session.execute(insert(TradeExecution).values(chunk))
 
     # --- Reads -----------------------------------------------------------------
 

@@ -82,6 +82,18 @@ class BootstrapResult:
     #: Fraction of resamples where the statistic came out at or below zero. The
     #: one-sided p-value for "this strategy is not profitable".
     proportion_at_or_below_zero: Decimal
+    #: Fraction at or **above** zero. Deliberately not ``1 - proportion_at_or_below_zero``:
+    #: both tails include the resamples that landed exactly on zero, so the two sum to
+    #: more than one whenever the distribution has an atom there.
+    #:
+    #: That atom is not a curiosity. A counterfactual scenario that repriced no trades
+    #: produces a delta of exactly zero for every trade, so *every* resample is exactly
+    #: zero, and ``1 - below`` is then 0 — which a two-sided formula reads as "no resample
+    #: landed on the other side", the signature of an overwhelming effect. The scenario
+    #: with the least possible evidence against the null scored the smallest possible
+    #: p-value. Carrying both tails inclusively is what makes the degenerate case come
+    #: out at 1 instead of at 1/iterations.
+    proportion_at_or_above_zero: Decimal
 
     @property
     def is_significantly_positive(self) -> bool:
@@ -116,14 +128,19 @@ def bootstrap_mean(
 
     means: list[int] = []
     at_or_below_zero = 0
+    at_or_above_zero = 0
     for _ in range(iterations):
         running = 0
         for _ in range(count):
             running += scaled[rng.randrange(count)]
         resampled_mean = running // count
         means.append(resampled_mean)
+        # Both comparisons are inclusive, so a resample of exactly zero counts in each.
+        # See the note on `proportion_at_or_above_zero`.
         if resampled_mean <= 0:
             at_or_below_zero += 1
+        if resampled_mean >= 0:
+            at_or_above_zero += 1
 
     means.sort()
     with localcontext() as ctx:
@@ -145,6 +162,7 @@ def bootstrap_mean(
         iterations=iterations,
         sample_size=count,
         proportion_at_or_below_zero=Decimal(at_or_below_zero) / Decimal(iterations),
+        proportion_at_or_above_zero=Decimal(at_or_above_zero) / Decimal(iterations),
     )
 
 

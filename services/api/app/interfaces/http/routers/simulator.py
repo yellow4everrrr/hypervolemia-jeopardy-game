@@ -79,9 +79,27 @@ class QuantifyRequest(BaseModel):
     account_id: UUID | None = None
 
 
+#: Resamples for an interactive sweep, mirroring the pattern scan's ``QUICK``. A coarser
+#: bootstrap makes the p-value *floor* higher — 1/2,000 rather than 1/10,000 — so a quick
+#: sweep is more conservative than a thorough one, never less: a scenario that clears the
+#: bar here would clear it with more resamples too.
+#:
+#: The knob exists because the full sweep is genuinely slow. Nine scenarios re-priced
+#: across 1,447 trades with ten thousand resamples each takes **94 seconds**, which is
+#: past most proxy and load-balancer timeouts and far past the point where a person
+#: believes the page is broken. Milestone 13's queue is the real answer — the sweep should
+#: be a job — and until then this keeps the interactive path usable rather than nominal.
+QUICK_PERMUTATIONS = 2_000
+
+
 @router.post("/sweep", summary="Simulate counterfactual rules against real history")
 async def run_sweep(
-    payload: SweepRequest, user: CurrentUserDep, session: SessionDep
+    payload: SweepRequest,
+    user: CurrentUserDep,
+    session: SessionDep,
+    quick: Annotated[
+        bool, Query(description="Fewer resamples, faster response, coarser p-values")
+    ] = False,
 ) -> dict[str, Any]:
     """Re-price the trader's history under each scenario, corrected as one family.
 
@@ -111,6 +129,7 @@ async def run_sweep(
         session_from=payload.session_from,
         session_to=payload.session_to,
         scenarios=scenarios,
+        permutations=QUICK_PERMUTATIONS if quick else None,
     )
     return outcome.to_payload()
 

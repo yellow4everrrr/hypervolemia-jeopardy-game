@@ -3,13 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "check": "npm run typecheck && npm run lint && npm run test",
+    "dev": "next dev",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit",
+    "smoke": "playwright test",
+    "start": "next start",
     "test": "vitest run",
-    "check": "npm run typecheck && npm run lint && npm run test"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.90.2",
@@ -20,6 +21,7 @@
     "zustand": "^5.0.8"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/postcss": "^4.1.15",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.0",

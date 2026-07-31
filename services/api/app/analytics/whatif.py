@@ -332,17 +332,29 @@ def _test_difference(
     if result is None:  # pragma: no cover — sample size guarded above
         return None, None
 
-    # Two-sided bootstrap p-value from the share of resamples landing on the wrong side
-    # of zero. Clamped to a floor of 1/iterations rather than allowed to reach zero:
-    # a finite number of resamples can never rule chance out entirely, and p = 0 would
-    # overstate what was measured.
-    below = result.proportion_at_or_below_zero
+    # Two-sided bootstrap p-value: twice the smaller tail, where **both tails are
+    # inclusive of zero**. Clamped to a floor of 1/iterations rather than allowed to
+    # reach zero, because a finite number of resamples can never rule chance out
+    # entirely and p = 0 would overstate what was measured.
+    #
+    # The inclusivity is the load-bearing part, and using `1 - below` for the upper tail
+    # instead of measuring it was a shipped bug. `proportion_at_or_below_zero` counts the
+    # resamples that landed *exactly* on zero, so `1 - below` excludes them twice over.
+    # When a scenario reprices no trades every delta is exactly zero, every resample is
+    # exactly zero, `below` is 1, and `1 - below` is 0 — which this formula read as "not
+    # one resample fell on the other side of zero" and scored at the floor, 0.0001. The
+    # scenarios with literally no effect came back as the most significant results in the
+    # sweep, and being part of an FDR family, their bogus p-values moved the correction
+    # threshold for every honest test beside them.
+    #
+    # With both tails measured, the degenerate case gives min(1, 1) = 1 and p = 1: no
+    # evidence, which is the truth about a rule that changed nothing.
+    smaller_tail = min(
+        result.proportion_at_or_below_zero, result.proportion_at_or_above_zero
+    )
     p_value = min(
         Decimal(1),
-        max(
-            Decimal(2) * min(below, Decimal(1) - below),
-            Decimal(1) / Decimal(iterations),
-        ),
+        max(Decimal(2) * smaller_tail, Decimal(1) / Decimal(iterations)),
     )
 
     spread = stdev(deltas)

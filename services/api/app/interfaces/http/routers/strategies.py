@@ -294,6 +294,32 @@ async def rule_impact(
 
 
 def _to_summary(strategy: Any, rules: list[Any]) -> StrategySummary:
-    summary = StrategySummary.model_validate(strategy)
-    summary.rules = [RuleSummary.model_validate(rule) for rule in rules]
-    return summary
+    """Project a strategy and its rules onto the wire without touching the ORM relationship.
+
+    Every field is named explicitly rather than going through
+    ``StrategySummary.model_validate(strategy)``. That call looks equivalent and is not:
+    ``StrategySummary`` declares a ``rules`` field and sets ``from_attributes=True``, so
+    Pydantic reads ``strategy.rules`` during validation — a **lazy relationship**. Under
+    asyncio a lazy load raises ``MissingGreenlet`` rather than emitting a query, so
+    ``GET /strategies`` returned a 500 for any user who actually had a strategy.
+
+    The overwrite on the next line made it look safe: the previous version assigned the
+    correct rules immediately after validating, so the relationship was never *used*. It
+    was still read, and reading was the whole problem.
+
+    Nothing caught this because every test built strategies through the repository inside
+    the session that created them, where the relationship is already populated. The first
+    request that loaded a strategy from a cold session was the demo — which is exactly the
+    class of defect that only running the application finds (ADR 0016).
+    """
+    return StrategySummary(
+        id=strategy.id,
+        name=strategy.name,
+        description=strategy.description,
+        version=strategy.version,
+        supersedes_id=strategy.supersedes_id,
+        is_active=strategy.is_active,
+        checklist=strategy.checklist,
+        created_at=strategy.created_at,
+        rules=[RuleSummary.model_validate(rule) for rule in rules],
+    )

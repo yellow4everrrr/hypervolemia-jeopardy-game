@@ -18,10 +18,12 @@ from decimal import Decimal
 
 import pytest
 
+from app.analytics.montecarlo import DEFAULT_SEED, bootstrap_mean
 from app.analytics.types import Direction, TradeRecord
 from app.analytics.whatif import (
     Scenario,
     SweepReport,
+    _test_difference,
     default_scenarios,
     simulate,
     sweep,
@@ -544,3 +546,79 @@ def test_each_scenario_keeps_its_own_adjusted_p_value() -> None:
         assert comparison is not None
         assert comparison.adjusted_p_value is not None, result.scenario.label
         assert comparison.adjusted_p_value >= comparison.p_value, result.scenario.label
+
+
+def test_a_scenario_that_changes_nothing_is_not_significant() -> None:
+    """The null case, which scored at the significance floor.
+
+    A rule that reprices no trades — a 3R target on a history where nothing reached 3R —
+    produces a delta of exactly zero on every trade. That is the *least* possible
+    evidence against the null, and the sweep reported it as p = 0.0001, the smallest
+    p-value the test can emit.
+
+    The cause was measuring one tail and subtracting for the other.
+    `proportion_at_or_below_zero` counts resamples landing exactly on zero, so with every
+    resample at zero it is 1 and `1 - below` is 0 — read by a two-sided formula as "no
+    resample fell on the far side", the signature of an overwhelming effect rather than
+    of no effect at all.
+
+    This mattered beyond one confusing row. The sweep is a single FDR-corrected family,
+    so two scenarios with no effect and p = 0.0001 sat at the top of the sorted p-values
+    and shifted the Benjamini-Hochberg threshold for every real test beside them.
+    """
+    comparison, interval = _test_difference(
+        [Decimal(0)] * 200, seed=DEFAULT_SEED, iterations=2_000
+    )
+
+    assert comparison is not None
+    assert comparison.p_value == Decimal(1), (
+        f"a scenario with zero effect scored p = {comparison.p_value}; "
+        "no evidence must not read as maximum evidence"
+    )
+    assert interval is not None
+    assert interval.low == 0 and interval.high == 0
+
+
+def test_a_real_improvement_is_still_significant() -> None:
+    """Guards the fix against over-correcting.
+
+    Making the degenerate case return 1 is only right if a genuine, consistent
+    improvement still clears the bar. A uniform +50 on every trade is as strong as an
+    effect gets.
+    """
+    comparison, interval = _test_difference(
+        [Decimal(50)] * 200, seed=DEFAULT_SEED, iterations=2_000
+    )
+
+    assert comparison is not None
+    assert comparison.p_value <= Decimal("0.01")
+    assert interval is not None
+    assert interval.low > 0
+
+
+def test_a_mixed_sample_lands_between_the_two() -> None:
+    """Noise centred on zero is not significant either, by a different route.
+
+    Here the resample distribution genuinely straddles zero rather than collapsing onto
+    it, so both tails are substantial and the p-value is large without the atom being
+    involved at all.
+    """
+    deltas = [Decimal(value) for value in (30, -28, 25, -32, 27, -26) * 40]
+    comparison, _ = _test_difference(deltas, seed=DEFAULT_SEED, iterations=2_000)
+
+    assert comparison is not None
+    assert comparison.p_value > Decimal("0.05")
+
+
+def test_both_bootstrap_tails_include_zero() -> None:
+    """The property the p-value depends on, asserted where it is produced.
+
+    The two tails sum to more than one exactly when resamples land on zero. Asserting it
+    here means a later "simplification" of `bootstrap_mean` back to a single tail fails
+    in the module that owns the definition, not three layers up in a sweep result.
+    """
+    result = bootstrap_mean([Decimal(0)] * 100, iterations=500, seed=DEFAULT_SEED)
+
+    assert result is not None
+    assert result.proportion_at_or_below_zero == Decimal(1)
+    assert result.proportion_at_or_above_zero == Decimal(1)

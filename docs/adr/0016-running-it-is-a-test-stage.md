@@ -62,11 +62,22 @@ things follow.
 - New endpoints consumed by the frontend should be projected through a named function and
   added to the wire-contract test. The cost is one test line; the alternative is a blank
   cell nobody reports.
-- The remaining gap is acknowledged and not yet closed: **there is no smoke test that loads
-  each route against a running API and asserts it renders.** That check would have caught
-  the crashed page, the empty chart and the placeholder dashboard directly rather than by
-  proxy. It needs an API and a database in CI, which the frontend pipeline does not
-  currently have, and a test that cannot run is worse than an acknowledged gap.
+- **The route smoke test now exists** (`apps/web/tests/smoke.spec.ts`, run by the `smoke`
+  job in `web-ci.yml`). It stands up Postgres, migrates, seeds a demo history, starts the
+  API and a production frontend build, and loads every route asserting: no page error, no
+  crash boundary, no `undefined`/`NaN`/`[object Object]`, no figure with nine or more
+  decimal places, **and** a route-specific string that proves the page rendered content
+  rather than an empty container. That last clause is the one that matters — the crash was
+  the easiest of the six defects to catch, and the blank blotter, empty chart and
+  placeholder dashboard all passed every check that only asks whether an exception was
+  thrown.
+
+  It earned its place immediately. On its first run against a fresh database it caught a
+  replay chart reporting zero bars, and the frontend job now also triggers on
+  `services/api/**` changes, because renaming a response field is a green backend change
+  that blanks a column nobody is watching.
+- Frontend CI exists at all, which it did not for thirteen milestones: `tsc`, `eslint` and
+  `vitest` ran only when someone remembered.
 - Demo seed data must exercise the thresholds the engine actually uses. The first seeded
   history put five trades in every session against an `OVERTRADING_THRESHOLD` of six, so
   the one detector capable of finding the planted leak never had a sample — the scan came

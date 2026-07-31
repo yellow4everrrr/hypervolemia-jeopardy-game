@@ -34,6 +34,7 @@ from app.domain.common.enums import TradeStatus
 from app.domain.rules.ast import Outcome
 from app.domain.rules.context import TradeFacts
 from app.domain.rules.engine import ComplianceReport, Rule
+from app.infrastructure.db.bulk import batched
 from app.infrastructure.db.models.broker import Account, AccountBalanceSnapshot
 from app.infrastructure.db.models.catalog import (
     MarketCondition,
@@ -325,16 +326,21 @@ class SqlAlchemyComplianceRepository:
         if not rows:
             return 0
 
-        statement = insert(RuleEvaluation).values(rows)
-        await self._session.execute(
-            statement.on_conflict_do_update(
-                constraint="uq_rule_evaluations_trade_rule",
-                set_={
-                    column: getattr(statement.excluded, column)
-                    for column in ("passed", "evaluable", "detail", "evaluated_at")
-                },
+        # Batched: this table grows as trades × rules, so one statement blew through
+        # Postgres' 32,767 bind-parameter ceiling at 512 trades against the eight starter
+        # rules. See `app.infrastructure.db.bulk`.
+        for chunk in batched(rows):
+            statement = insert(RuleEvaluation).values(chunk)
+            await self._session.execute(
+                statement.on_conflict_do_update(
+                    constraint="uq_rule_evaluations_trade_rule",
+                    set_={
+                        column: getattr(statement.excluded, column)
+                        for column in ("passed", "evaluable", "detail", "evaluated_at")
+                    },
+                )
             )
-        )
+
         logger.info("compliance.reports_saved", user_id=str(user_id), rows=len(rows))
         return len(rows)
 

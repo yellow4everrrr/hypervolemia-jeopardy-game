@@ -16,6 +16,8 @@ const NAV = [
   { href: "/", label: "Dashboard", hint: "Performance at a glance" },
   { href: "/trades", label: "Trades", hint: "Every reconstructed round turn" },
   { href: "/patterns", label: "Patterns", hint: "Behavioural leaks and edges" },
+  { href: "/strategies", label: "Strategies", hint: "Rules and compliance" },
+  { href: "/simulator", label: "Simulator", hint: "What-if rule changes" },
   { href: "/reports", label: "Reports", hint: "Daily through annual" },
   { href: "/jobs", label: "Jobs", hint: "Background work" },
 ] as const;
