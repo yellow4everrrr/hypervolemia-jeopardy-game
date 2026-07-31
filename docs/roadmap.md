@@ -19,7 +19,7 @@ reviewable, ships tests and docs, and leaves `main` deployable.
 | 3 | **Analytics engine** | Every AI claim must trace to a deterministic Python number. Expectancy, profit factor, Sharpe/Sortino, SQN, Kelly, risk of ruin, drawdown, edge ratio, Monte Carlo, bootstrap confidence intervals, the full segmentation cube, and the significance control that stops it manufacturing edges. | ✅ Complete |
 | 4 | **Market data & replay engine** | Replay and MAE/MFE need bar data. TimescaleDB hypertables, bar ingestion, replay window computation, marker generation, S3 snapshot pipeline. | ✅ Complete |
 | 5 | **Frontend foundation** | Next.js + design system, dashboard, trade blotter, patterns, reports, jobs. Evidence components that will not render a number without what qualifies it. | ✅ Complete |
-| 6 | **Trade replay UI** | Lightweight Charts playback: play/pause/seek/speed, entry/exit/stop/target markers, risk box, P&L animation, indicators, drawings. | ⏳ Next |
+| 6 | **Trade replay UI** | Lightweight Charts playback, stepped bar by bar with no interpolation. Entry/exit/stop markers drawn only for recorded prices. | ✅ Complete |
 | 7 | **Strategy builder & compliance engine** | Turns subjective "did I follow my plan?" into a scored, rule-by-rule verdict on every imported trade. | ✅ Complete |
 | 8 | **Pattern & setup detection** | Unsupervised clustering + hypothesis testing to surface hidden edges and leaks; automatic setup classification. | ✅ Complete |
 | 9 | **AI coach layer** | Claude as head quant researcher, constrained by a strict evidence contract: it may only cite metrics returned by the analytics engine. | ✅ Complete |
@@ -31,8 +31,7 @@ reviewable, ships tests and docs, and leaves `main` deployable.
 ### A note on ordering
 
 The backend milestones (7–13) were built before the frontend ones (5–6), a deliberate
-departure from the numbering above. That sequencing is now complete: every backend
-milestone has shipped and the frontend is next.
+departure from the numbering above. All thirteen have now shipped.
 
 The reason is that 7–13 compound on each other and on the analytics engine, while 5 and
 6 consume an API. Building the UI against a half-finished API means building it twice:
@@ -563,6 +562,51 @@ global; and the replay chart, which is milestone 6.
 Most months establish no changes and most traders' models are refused. A journal rendering
 arrows and probabilities on the same data is not more capable, only less careful — but it
 demos better, and that pressure is real.
+
+---
+
+## Milestone 6 — delivered scope
+
+**Why this last.** Replay is the feature that sells a trading journal, and the one where the
+interface makes a claim the data cannot support. Unlike every previous milestone the claim
+is not in a number — it is in the *motion*.
+
+Delivered:
+
+- Lightweight Charts candles, stepped bar by bar with a pure playback reducer.
+- Play/pause/step/seek/speed, entry and exit markers, entry/exit/stop price lines.
+- Gap warnings in the transport, sourced from the backend's recorded gaps.
+- 21 tests over the playback engine.
+
+**A bar is not a recording.** It is an open, high, low and close over an interval; the path
+price took *within* it was never recorded and is not derivable from the four numbers that
+summarise it. A conventional replay draws a smooth line and animates a cursor along it,
+with the visual authority of a recording, and everything between two closes is an
+interpolation the charting library invented.
+
+So the replay never interpolates, and renders candles rather than a line — a line of closes
+discards the high and low, which is the only information the data has about intra-bar
+movement. This is the same constraint [ADR 0008](./adr/0008-counterfactual-simulation.md)
+already applied: excursions record that both extremes were reached without recording which
+came first, which is why the simulator resolves a stop before a target. An animated path
+would assert exactly the ordering that ADR refuses to assume, visually, where nobody thinks
+to ask for evidence.
+
+Three further rules, each of which the obvious implementation breaks:
+
+- **The chart shows only bars the playhead has reached.** Rendering the whole series and
+  moving a cursor has already told the viewer how the trade ends.
+- **A gap is not a flat market.** Any chart that connects the points it has renders "no data
+  here" and "price did not move here" identically, and on a futures chart the overnight
+  break is the largest gap in the series.
+- **Only recorded prices get a line.** A stop line at a plausible level would invent the
+  trader's plan, and a chart with one looks *more* complete than a chart without.
+
+The reasoning is in [ADR 0013](./adr/0013-replay-invents-a-path.md).
+
+**Explicitly not in milestone 6:** indicators and freehand drawings, which are a charting
+product rather than a journalling one and would be the first place a user drew a conclusion
+the data does not support.
 
 ---
 
