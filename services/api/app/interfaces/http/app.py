@@ -8,16 +8,18 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 
-from app.core.config import Settings, get_settings
+from app.core.config import Environment, Settings, get_settings
 from app.core.logging import configure_logging, get_logger
 from app.infrastructure.db.session import dispose_engine
 from app.interfaces.http.errors import register_error_handlers
-from app.interfaces.http.middleware import RequestContextMiddleware
+from app.interfaces.http.middleware import RateLimitMiddleware, RequestContextMiddleware
+from app.interfaces.http.ratelimit import RateLimiter
 from app.interfaces.http.routers import (
     analytics,
     broker,
     coach,
     health,
+    jobs,
     patterns,
     predictions,
     replay,
@@ -38,9 +40,73 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         environment=settings.environment,
         version=settings.version,
     )
+    await _verify_tenant_isolation(settings)
     yield
     await dispose_engine()
     logger.info("app.stopped")
+
+
+async def _verify_tenant_isolation(settings: Settings) -> None:
+    """Refuse to start in production when row-level security is not actually enforced.
+
+    This check exists because the failure it catches is invisible. Policies can be
+    present, correct and ``FORCE``d while doing nothing at all — Postgres exempts
+    superusers unconditionally, and the migration role owns the tables. Measured on a
+    real database in exactly that configuration, one tenant's session read another
+    tenant's trades with no error anywhere.
+
+    Every downstream symptom of that is silence, so the check is loud: fatal in
+    production, a warning elsewhere so local development against a superuser connection
+    still works.
+    """
+    from app.infrastructure.db.session import get_sessionmaker
+    from app.infrastructure.db.tenancy import assert_rls_effective
+
+    try:
+        async with get_sessionmaker()() as session:
+            effective = await assert_rls_effective(session)
+    except Exception as exc:
+        logger.warning("app.tenancy_check_skipped", error=str(exc))
+        return
+
+    if effective:
+        logger.info("app.tenant_isolation_enforced")
+        return
+
+    if settings.is_production:
+        raise RuntimeError(
+            "row-level security is not enforced for this connection: the application "
+            "must connect as a role that is neither a superuser nor the owner of the "
+            "tenant tables (see the ledgerline_app role in migration 0004). Refusing "
+            "to start, because in this state a query missing its user_id filter returns "
+            "every tenant's rows and nothing reports an error."
+        )
+
+    logger.warning(
+        "app.tenant_isolation_not_enforced",
+        detail=(
+            "policies exist but this connection bypasses them; acceptable locally, "
+            "fatal in production"
+        ),
+    )
+
+
+def _build_limiter(settings: Settings) -> RateLimiter | None:
+    """Construct the limiter, or ``None`` when there is nothing to limit with.
+
+    Returning ``None`` rather than a no-op client keeps the "no Redis configured"
+    case explicit at the call site instead of hiding it behind an object that silently
+    allows everything.
+    """
+    if settings.environment is Environment.TEST:
+        return None
+    try:
+        import redis.asyncio as redis_asyncio
+
+        return RateLimiter(redis_asyncio.from_url(str(settings.redis_url)))
+    except Exception as exc:  # pragma: no cover - redis package or URL problem
+        logger.warning("app.ratelimit_disabled", error=str(exc))
+        return None
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -66,6 +132,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
 
     app.add_middleware(RequestContextMiddleware)
+    # Added after RequestContextMiddleware so it runs *inside* it: a rejected request
+    # still gets a request id and an access log line, which is exactly when someone
+    # needs both.
+    app.add_middleware(RateLimitMiddleware, limiter=_build_limiter(settings))
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -89,5 +159,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(simulator.router, prefix=f"{settings.api_prefix}/v1")
     app.include_router(predictions.router, prefix=f"{settings.api_prefix}/v1")
     app.include_router(reports.router, prefix=f"{settings.api_prefix}/v1")
+    app.include_router(jobs.router, prefix=f"{settings.api_prefix}/v1")
 
     return app

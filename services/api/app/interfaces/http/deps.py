@@ -15,6 +15,7 @@ from app.core.errors import AuthenticationError, NotFoundError
 from app.core.logging import bind_contextvars
 from app.infrastructure.db.models.identity import User
 from app.infrastructure.db.session import get_sessionmaker
+from app.infrastructure.db.tenancy import set_tenant
 from app.infrastructure.secrets.store import (
     EnvironmentSecretStore,
     InMemorySecretStore,
@@ -92,13 +93,23 @@ PrincipalDep = Annotated[AuthenticatedPrincipal, Depends(get_principal)]
 
 
 async def get_current_user(principal: PrincipalDep, session: SessionDep) -> User:
-    """Resolve the local user row for the verified principal."""
+    """Resolve the local user row, and bind the transaction to that tenant.
+
+    Binding here rather than in each router is deliberate: every authenticated endpoint
+    already depends on this, so there is no path that reaches a repository with an
+    unbound session. ``users`` itself carries no ``user_id`` and has no policy, which is
+    why this lookup works before the binding exists.
+
+    The binding is transaction-scoped, so it cannot survive back into the pool.
+    """
     stmt = select(User).where(
         User.clerk_user_id == principal.clerk_user_id, User.deleted_at.is_(None)
     )
     user = (await session.execute(stmt)).scalar_one_or_none()
     if user is None:
         raise NotFoundError("no Ledgerline account is linked to this identity")
+
+    await set_tenant(session, user.id)
     bind_contextvars(user_id=str(user.id))
     return user
 

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import time
 import uuid
 from typing import Any
 
+import orjson
 from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -68,3 +70,111 @@ class RequestContextMiddleware:
                 duration_ms=round(duration_ms, 2),
             )
             clear_contextvars()
+
+
+class RateLimitMiddleware:
+    """Apply per-user token buckets, with a tighter sub-limit on expensive routes.
+
+    Runs as middleware rather than a dependency so that it applies before request body
+    parsing and before any database work — a limiter that only rejects after the handler
+    has already opened a session and read rows has not limited very much.
+
+    The identity is the authenticated user where one is available. It is read from the
+    same ``Authorization`` header the auth layer will verify, *without* verifying it
+    here: an unverified token is fine as a bucket key, because a forged one only ever
+    lets an attacker consume a bucket that is not theirs and the request still fails
+    authentication a moment later. Verifying twice would double the JWT cost of every
+    request to save nothing.
+    """
+
+    #: Paths that are never limited. Health probes fire continuously by design, and a
+    #: limiter that can make a readiness check fail will eventually take a deployment
+    #: down during an incident — exactly when the probes matter most.
+    EXEMPT: tuple[str, ...] = ("/health", "/ready", "/docs", "/openapi.json", "/redoc")
+
+    def __init__(self, app: ASGIApp, limiter: Any | None = None) -> None:
+        self.app = app
+        self.limiter = limiter
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or self.limiter is None:
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope, receive=receive)
+        path = request.url.path
+        if any(path.startswith(prefix) for prefix in self.EXEMPT):
+            await self.app(scope, receive, send)
+            return
+
+        decision = await self.limiter.check(identity=_identity(request), path=path)
+
+        if not decision.allowed:
+            logger.warning(
+                "ratelimit.rejected",
+                path=path,
+                bucket=decision.bucket,
+                retry_after=decision.retry_after,
+            )
+            await _too_many_requests(send, decision)
+            return
+
+        async def send_wrapper(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = message.setdefault("headers", [])
+                for key, value in decision.headers().items():
+                    headers.append((key.lower().encode(), value.encode()))
+            await send(message)
+
+        await self.app(scope, receive, send_wrapper)
+
+
+def _identity(request: Request) -> str:
+    """Bucket key: the caller's token where present, else their address.
+
+    Keyed on the token rather than the IP because IP keying punishes everyone behind one
+    NAT and is trivially evaded by whoever it would catch. The address is only a fallback
+    for unauthenticated traffic, which should not be reaching limited routes at all.
+    """
+    header = request.headers.get("authorization")
+    if header and header.lower().startswith("bearer "):
+        token = header.split(" ", 1)[1].strip()
+        # A hash, not the token: this becomes a Redis key and, in a debug dump, a log
+        # line. Storing a live credential in either is how a bearer token leaks.
+        return "t:" + hashlib.sha256(token.encode()).hexdigest()[:32]
+
+    debug_user = request.headers.get("x-debug-user")
+    if debug_user:
+        return f"d:{debug_user}"
+
+    client = request.client
+    return f"ip:{client.host if client else 'unknown'}"
+
+
+async def _too_many_requests(send: Send, decision: Any) -> None:
+    """Emit a 429 in the same envelope as every other error.
+
+    Shape matters: clients parse ``error.code``, and a limiter that invents its own
+    response body forces a special case into every one of them.
+    """
+    body = orjson.dumps(
+        {
+            "error": {
+                "code": "rate_limited",
+                "message": (
+                    "too many requests; this endpoint is rate limited to protect the "
+                    "analysis workers"
+                ),
+                "details": {
+                    "bucket": decision.bucket,
+                    "retry_after_seconds": decision.retry_after,
+                },
+            }
+        }
+    )
+    headers = [(b"content-type", b"application/json")]
+    for key, value in decision.headers().items():
+        headers.append((key.lower().encode(), value.encode()))
+
+    await send({"type": "http.response.start", "status": 429, "headers": headers})
+    await send({"type": "http.response.body", "body": body})

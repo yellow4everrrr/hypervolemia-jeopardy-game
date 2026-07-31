@@ -32,6 +32,7 @@ from app.infrastructure.db.models.catalog import (
 )
 from app.infrastructure.db.models.identity import User, UserSetting
 from app.infrastructure.db.models.instruments import Instrument
+from app.infrastructure.db.models.jobs import Job
 from app.infrastructure.db.models.journal import DailyJournal, Note, Screenshot
 from app.infrastructure.db.models.marketdata import MarketBar, ReplayMetadata
 from app.infrastructure.db.models.trading import (
@@ -56,6 +57,7 @@ __all__ = [
     "EquityCurvePoint",
     "Execution",
     "Instrument",
+    "Job",
     "MarketBar",
     "MarketCondition",
     "Note",

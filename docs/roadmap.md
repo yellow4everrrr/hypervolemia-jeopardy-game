@@ -18,22 +18,23 @@ reviewable, ships tests and docs, and leaves `main` deployable.
 | 2 | **Tradovate integration & sync pipeline** | Zero manual journaling is the core promise. Token lifecycle, REST backfill, WebSocket live fills, idempotent ingestion, safe sync cursors, reconciliation against broker P/L. | ✅ Complete |
 | 3 | **Analytics engine** | Every AI claim must trace to a deterministic Python number. Expectancy, profit factor, Sharpe/Sortino, SQN, Kelly, risk of ruin, drawdown, edge ratio, Monte Carlo, bootstrap confidence intervals, the full segmentation cube, and the significance control that stops it manufacturing edges. | ✅ Complete |
 | 4 | **Market data & replay engine** | Replay and MAE/MFE need bar data. TimescaleDB hypertables, bar ingestion, replay window computation, marker generation, S3 snapshot pipeline. | ✅ Complete |
-| 5 | **Frontend foundation** | Next.js + Clerk + design system, dashboard, trade blotter, trade detail. Bloomberg density with Linear polish. | Planned (after 12) |
-| 6 | **Trade replay UI** | Lightweight Charts playback: play/pause/seek/speed, entry/exit/stop/target markers, risk box, P&L animation, indicators, drawings. | Planned (after 12) |
+| 5 | **Frontend foundation** | Next.js + Clerk + design system, dashboard, trade blotter, trade detail. Bloomberg density with Linear polish. | ⏳ Next |
+| 6 | **Trade replay UI** | Lightweight Charts playback: play/pause/seek/speed, entry/exit/stop/target markers, risk box, P&L animation, indicators, drawings. | Planned |
 | 7 | **Strategy builder & compliance engine** | Turns subjective "did I follow my plan?" into a scored, rule-by-rule verdict on every imported trade. | ✅ Complete |
 | 8 | **Pattern & setup detection** | Unsupervised clustering + hypothesis testing to surface hidden edges and leaks; automatic setup classification. | ✅ Complete |
 | 9 | **AI coach layer** | Claude as head quant researcher, constrained by a strict evidence contract: it may only cite metrics returned by the analytics engine. | ✅ Complete |
 | 10 | **What-if simulator** | Counterfactual re-simulation (different stop/target/RR/ATR trail/filters) with recomputed expectancy and significance. | ✅ Complete |
 | 11 | **ML layer** | Success probability and expected R with walk-forward validation, calibration and a refusal-to-serve gate. Optimal stop/target deferred — see below. | ✅ Complete |
 | 12 | **Reports & scheduling** | Daily → annual reports with deduplicated leak quantification and tested period-over-period comparison. | ✅ Complete |
-| 13 | **Hardening & scale** | Partitioning, continuous aggregates, observability, rate limits, RLS, deployment. | ⏳ Next |
+| 13 | **Hardening & scale** | Postgres-backed job queue, row-level security, two-tier rate limiting. Partitioning and continuous aggregates deferred — see below. | ✅ Complete |
 
 ### A note on ordering
 
-The backend milestones (7–12) are being built before the frontend ones (5–6), which is
-a deliberate departure from the numbering above.
+The backend milestones (7–13) were built before the frontend ones (5–6), a deliberate
+departure from the numbering above. That sequencing is now complete: every backend
+milestone has shipped and the frontend is next.
 
-The reason is that 7–12 compound on each other and on the analytics engine, while 5 and
+The reason is that 7–13 compound on each other and on the analytics engine, while 5 and
 6 consume an API. Building the UI against a half-finished API means building it twice:
 the compliance panel, the pattern list, the coach transcript and the what-if controls
 each change the shape of the trade detail view, and a frontend written before those
@@ -457,6 +458,63 @@ guide is [docs/reports.md](./reports.md).
 **Explicitly not in milestone 12:** the AI narrative layer over reports, which reuses the
 milestone 9 placeholder contract unchanged and belongs with the frontend that renders it;
 and real scheduled execution, which needs the worker chosen in milestone 13.
+
+---
+
+## Milestone 13 — delivered scope
+
+**Why this now.** Three surfaces — the pattern scan, model training and report generation —
+have been synchronous `POST` endpoints costing seconds each, with every milestone deferring
+the worker to this one. That debt is now due. And an audit at the start of this milestone
+found the standing "every repository requires `user_id`" rule had held across 26 user-scoped
+models and every query in the codebase — which is exactly when it becomes worth replacing,
+because the worker is the thing that will break it.
+
+Delivered:
+
+- **A Postgres-backed job queue.** Claimed with `SELECT ... FOR UPDATE SKIP LOCKED`, with
+  leases for crash recovery, geometric backoff, dead-lettering, and idempotency enforced by
+  a partial unique index rather than a check-then-insert.
+- **A worker** that binds the row-level-security context from `jobs.user_id` before
+  dispatching, so a handler physically cannot reach another tenant's rows.
+- **Row-level security** on all 28 tenant tables, with `WITH CHECK` as well as `USING`.
+- **Two-tier rate limiting**, expensive routes consuming from both buckets, failing open.
+- 55 new tests, migration `0004_jobs_and_rls`.
+
+**The queue is a table and not Redis** for one reason: a job's completion and the rows it
+writes must commit together. With an external broker they cannot — the worker either
+acknowledges before its transaction commits and loses work on rollback, or commits first and
+runs the job twice. Claiming inside the same transaction as the work removes the second
+system entirely. Postgres is not a message broker and this design does not pretend
+otherwise; it polls and holds a row lock per job, which is affordable for a handful of jobs
+per trader per day.
+
+**Row-level security shipped inert on the first attempt, and only measuring caught it.**
+The policies were created, RLS enabled, `FORCE ROW LEVEL SECURITY` set — and a probe against
+a real database showed one tenant reading another's trades:
+
+```
+connected as: postgres   superuser: True
+UNBOUND connection sees 2 trades          <-- should be 0
+CROSS-TENANT ROWS VISIBLE: {bob's id}
+```
+
+Postgres exempts superusers unconditionally and table owners unless forced, and most
+deployments connect as the role that ran the migrations. This is the worst shape a security
+control can have: every check short of an actual cross-tenant read reports success. The fix
+was a non-owner `ledgerline_app` role in the migration, plus a startup check that is **fatal
+in production**. The tests carry the same lesson — they `SET LOCAL ROLE` before every
+assertion, and one of them asserts the guard returns *false* for the suite's own superuser
+connection, because a tenancy test written against the default connection would have passed
+while proving nothing.
+
+The reasoning is recorded in [ADR 0011](./adr/0011-jobs-and-tenant-isolation.md), and the
+operator guide is [docs/operations.md](./operations.md).
+
+**Explicitly not in milestone 13:** table partitioning and TimescaleDB continuous
+aggregates, which are unnecessary below roughly ten million trades and would add
+operational complexity nobody currently needs; and per-tenant queue fairness, where the
+fix when it is needed is a weighted claim rather than a second queue.
 
 ---
 

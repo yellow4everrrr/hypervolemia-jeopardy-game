@@ -262,3 +262,35 @@ class Timeframe(StrEnum):
         amount = int(self.value[:-1])
         factor = {"s": 1, "m": 60, "h": 3600, "d": 86_400, "w": 604_800}[unit]
         return amount * factor
+
+
+class JobKind(StrEnum):
+    """What a background job does.
+
+    Each maps to one handler. The three expensive surfaces — pattern scanning, model
+    training and report generation — are the reason this queue exists: all three cost
+    seconds, and until now all three were explicit ``POST`` endpoints a user waited on.
+    """
+
+    SYNC_BROKER = "sync_broker"
+    COMPUTE_ANALYTICS = "compute_analytics"
+    DETECT_PATTERNS = "detect_patterns"
+    TRAIN_MODELS = "train_models"
+    GENERATE_REPORTS = "generate_reports"
+    MEASURE_EXCURSIONS = "measure_excursions"
+
+
+class JobState(StrEnum):
+    """Where a job is in its life.
+
+    ``DEAD`` is separate from ``FAILED``: a failed job will be retried, a dead one has
+    exhausted its attempts and needs a human. Collapsing them would either retry forever
+    or give up on the first transient error.
+    """
+
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    DEAD = "dead"
+    CANCELLED = "cancelled"
