@@ -12,14 +12,14 @@ was not given is rejected before it reaches the trader.
 
 ## Status
 
-Milestone 1 of 13 is complete: foundation, domain model, database schema and dev
-harness. See [`docs/roadmap.md`](docs/roadmap.md) for what each milestone delivers and
-why it exists in that order.
+Milestones 1–2 of 13 are complete: foundation, domain model, database schema, and the
+Tradovate sync pipeline. See [`docs/roadmap.md`](docs/roadmap.md) for what each milestone
+delivers and why it exists in that order.
 
 | | |
 |---|---|
-| **Delivered** | Clean-architecture backend, FIFO trade reconstruction engine, 32-table Postgres/TimescaleDB schema, idempotent ingestion pipeline, FastAPI app with Clerk auth, 111 tests, CI |
-| **Next** | Milestone 2 — Tradovate OAuth, REST backfill, WebSocket live fills, broker reconciliation |
+| **Delivered** | Clean-architecture backend · FIFO trade reconstruction · 33-table Postgres/TimescaleDB schema · idempotent ingestion · Tradovate REST + WebSocket sync with cursor safety · broker reconciliation · FastAPI with Clerk auth · 237 tests · CI |
+| **Next** | Milestone 3 — analytics engine: expectancy, Sharpe/Sortino, SQN, Kelly, risk of ruin, drawdown, MAE/MFE, Monte Carlo, segmentation |
 
 ## Quick start
 
@@ -52,7 +52,7 @@ services/api/            FastAPI backend
   app/core/              settings, logging, UUIDv7, Decimal helpers, errors
   app/domain/            trading rules — pure, no I/O, no framework imports
   app/application/       use cases and the ports they depend on
-  app/infrastructure/    SQLAlchemy models, repositories, unit of work
+  app/infrastructure/    SQLAlchemy models, repositories, brokers, secrets
   app/interfaces/http/   routers, schemas, auth, middleware
   migrations/            Alembic
   tests/                 unit (no I/O), api (no database), db (real Postgres)
@@ -80,6 +80,9 @@ These are enforced by tests, types or the schema, not by convention:
 5. **Undefined statistics return `None`,** never zero or infinity. Profit factor with
    no losers is undefined, and the AI layer must be told so.
 6. **Every tenant-owned row carries `user_id`,** and repositories require it.
+7. **The sync cursor never advances past a fill that was not ingested.** A fill we
+   cannot interpret is deferred with a reason and retried, never skipped.
+8. **Broker credentials never touch the database.** Only a secret-store pointer does.
 
 ## Testing
 
@@ -98,9 +101,11 @@ the migrations, and rolls back to base.
 
 - [Roadmap](docs/roadmap.md) — the 13 milestones and what each is for
 - [Architecture](docs/architecture.md) — layering, write path, scale posture
-- [Data model](docs/data-model.md) — all 32 tables and the decisions behind them
+- [Data model](docs/data-model.md) — all 33 tables and the decisions behind them
 - [ADR 0001](docs/adr/0001-trade-reconstruction.md) — why round turns, why FIFO, why pure
 - [ADR 0002](docs/adr/0002-ai-evidence-contract.md) — how the AI is prevented from inventing statistics
+- [ADR 0003](docs/adr/0003-broker-sync.md) — why the sync cursor never skips a fill
+- [Tradovate integration](docs/tradovate-integration.md) — API specifics, auth, framing, known gaps
 
 ## Tech stack
 

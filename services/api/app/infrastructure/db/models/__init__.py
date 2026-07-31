@@ -20,6 +20,7 @@ from app.infrastructure.db.models.broker import (
     BrokerConnection,
     SyncRun,
 )
+from app.infrastructure.db.models.brokermap import BrokerInstrumentMap
 from app.infrastructure.db.models.catalog import (
     MarketCondition,
     RuleEvaluation,
@@ -49,6 +50,7 @@ __all__ = [
     "AiRecommendation",
     "Base",
     "BrokerConnection",
+    "BrokerInstrumentMap",
     "DailyJournal",
     "DetectedPattern",
     "EquityCurvePoint",

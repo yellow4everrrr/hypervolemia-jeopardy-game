@@ -1,7 +1,7 @@
 # Data model
 
-32 tables across seven concerns. Defined in `services/api/app/infrastructure/db/models/`,
-created by `migrations/versions/0001_initial_schema.py`.
+33 tables across seven concerns. Defined in `services/api/app/infrastructure/db/models/`,
+created by migrations `0001_initial_schema` and `0002_broker_sync`.
 
 ## Conventions
 
@@ -29,7 +29,8 @@ created by `migrations/versions/0001_initial_schema.py`.
 | `broker_connections` | One per broker login. Holds `credential_ref` — a **pointer into a secret manager**, never a token — plus per-endpoint `sync_cursor` JSONB. |
 | `accounts` | Trading accounts. Prop-firm fields (`max_daily_loss`, `max_drawdown`, `profit_target`) feed the compliance engine. |
 | `account_balance_snapshots` | Broker-reported equity over time. Deliberately independent of our reconstructed P&L: the disagreement between the two is how a reconstruction bug is caught before the trader finds it. |
-| `sync_runs` | Audit trail per sync attempt. Without it, "why is yesterday missing?" is unanswerable. |
+| `sync_runs` | Audit trail per sync attempt, including what was deferred and why. Without it, "why is yesterday missing?" is unanswerable. |
+| `broker_instrument_map` | Translates a broker's own instrument identifier to ours. Keyed by `(broker, environment, external_id)` because Tradovate's demo and live environments assign different contract ids to the same contract. |
 
 ## Instruments
 

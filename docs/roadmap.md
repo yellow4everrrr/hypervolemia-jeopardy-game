@@ -15,8 +15,8 @@ reviewable, ships tests and docs, and leaves `main` deployable.
 | # | Milestone | Why it exists | Status |
 |---|-----------|---------------|--------|
 | 1 | **Foundation, domain model & schema** | Nothing downstream is trustworthy if trade reconstruction or the schema is wrong. Establishes clean architecture, the FIFO execution→trade engine, the normalized Postgres/TimescaleDB schema, and the test/CI/dev harness. | ✅ Complete |
-| 2 | **Tradovate integration & sync pipeline** | Zero manual journaling is the core promise. OAuth + REST backfill + WebSocket live fills, idempotent ingestion, sync cursors, reconciliation against broker P/L. | ⏳ Next |
-| 3 | **Analytics engine** | Every AI claim must trace to a deterministic Python number. Expectancy, profit factor, Sharpe/Sortino, SQN, Kelly, risk of ruin, drawdown, MAE/MFE, edge ratio, Monte Carlo, bootstrap confidence intervals, and the full segmentation cube. | Planned |
+| 2 | **Tradovate integration & sync pipeline** | Zero manual journaling is the core promise. Token lifecycle, REST backfill, WebSocket live fills, idempotent ingestion, safe sync cursors, reconciliation against broker P/L. | ✅ Complete |
+| 3 | **Analytics engine** | Every AI claim must trace to a deterministic Python number. Expectancy, profit factor, Sharpe/Sortino, SQN, Kelly, risk of ruin, drawdown, MAE/MFE, edge ratio, Monte Carlo, bootstrap confidence intervals, and the full segmentation cube. | ⏳ Next |
 | 4 | **Market data & replay engine** | Replay and MAE/MFE need bar data. TimescaleDB hypertables, bar ingestion, replay window computation, marker generation, S3 snapshot pipeline. | Planned |
 | 5 | **Frontend foundation** | Next.js + Clerk + design system, dashboard, trade blotter, trade detail. Bloomberg density with Linear polish. | Planned |
 | 6 | **Trade replay UI** | Lightweight Charts playback: play/pause/seek/speed, entry/exit/stop/target markers, risk box, P&L animation, indicators, drawings. | Planned |
@@ -60,6 +60,44 @@ Delivered:
 **Explicitly not in milestone 1:** any broker network call, any statistic beyond what
 a single trade defines, any UI. Those are milestones 2, 3 and 5 — sequenced that way
 so each can be reviewed against a stable foundation.
+
+---
+
+## Milestone 2 — delivered scope
+
+**Why this second.** Milestone 1 built a reconstruction engine with nothing to feed it.
+Until real fills arrive, every downstream milestone would be built and validated against
+synthetic data — and synthetic data never contains the cases that break things: a fill
+whose order has not settled, a contract nobody seeded, a stream that drops mid-session.
+
+Delivered:
+
+- Tradovate REST client: token lifecycle including the `p-ticket` time-penalty protocol,
+  conservative token-bucket rate limiting, batched entity joins, and Decimal-safe JSON
+  parsing so a price never passes through a float.
+- Mapping layer that refuses to guess. A fill without its order, its contract
+  specification, or (within a grace period) its fee record is deferred with a reason,
+  never approximated.
+- `SyncBrokerAccount`: cursor-safe orchestration that never advances past a fill it did
+  not ingest — see [ADR 0003](./adr/0003-broker-sync.md).
+- Real-time WebSocket connection: SockJS-derived frame codec, unconditional heartbeats,
+  request/response correlation, reconnect with jittered backoff, and a mandatory REST
+  catch-up on every reconnect.
+- Secret-store abstraction. Broker credentials are never written to the database.
+- `broker_instrument_map` and `broker_connections.external_user_id` (migration 0002).
+- Reconciliation of our reconstructed P&L against the broker's own realized figure.
+- HTTP endpoints to link a broker login, list connections, sync on demand, and read the
+  sync audit trail.
+- 126 new tests, including 6 database-backed integration tests that run the real
+  pipeline end to end against a mocked Tradovate API.
+
+**Explicitly not in milestone 2:** scheduled background syncing (needs the worker chosen
+in milestone 13), market data ingestion (milestone 4), and any statistic beyond what a
+single trade defines (milestone 3).
+
+**Not yet verified against a live Tradovate account** — the integration is built from the
+published specification and tested against a mocked API. See
+[the integration notes](./tradovate-integration.md) for what that leaves open.
 
 ---
 

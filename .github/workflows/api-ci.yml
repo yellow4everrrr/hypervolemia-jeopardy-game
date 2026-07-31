@@ -107,6 +107,9 @@ jobs:
           fi
           rm migrations/versions/ci_drift_*.py
 
+      - name: Seed reference instruments
+        run: python -m app.scripts.seed_instruments
+
       - name: Run database-backed tests
         env:
           LEDGERLINE_TEST_DATABASE_URL: postgresql+asyncpg://ledgerline:ledgerline@localhost:5432/ledgerline

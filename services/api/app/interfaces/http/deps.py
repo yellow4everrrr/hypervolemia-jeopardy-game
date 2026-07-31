@@ -10,11 +10,16 @@ from fastapi import Depends, Header, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import Settings, get_settings
+from app.core.config import Environment, Settings, get_settings
 from app.core.errors import AuthenticationError, NotFoundError
 from app.core.logging import bind_contextvars
 from app.infrastructure.db.models.identity import User
 from app.infrastructure.db.session import get_sessionmaker
+from app.infrastructure.secrets.store import (
+    EnvironmentSecretStore,
+    InMemorySecretStore,
+    SecretStore,
+)
 from app.interfaces.http.auth import AuthenticatedPrincipal, ClerkTokenVerifier
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
@@ -23,6 +28,23 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 @lru_cache(maxsize=1)
 def get_verifier() -> ClerkTokenVerifier:
     return ClerkTokenVerifier(get_settings())
+
+
+@lru_cache(maxsize=1)
+def get_secret_store() -> SecretStore:
+    """Where broker credentials live.
+
+    Environment-backed in deployed environments, in-memory locally so that linking a
+    demo account during development does not require provisioning a secret manager.
+    The in-memory store is refused in production by `Settings.is_production` below.
+    """
+    settings = get_settings()
+    if settings.is_production or settings.environment is Environment.STAGING:
+        return EnvironmentSecretStore()
+    return InMemorySecretStore()
+
+
+SecretStoreDep = Annotated[SecretStore, Depends(get_secret_store)]
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:

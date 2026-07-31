@@ -46,6 +46,10 @@ class BrokerConnection(UUIDPrimaryKeyMixin, UserScopedMixin, TimestampMixin, Bas
     )
     #: Opaque handle into the secret manager. Never a token, never a password.
     credential_ref: Mapped[str | None] = mapped_column(String(256))
+    #: The broker's own user id for this login. Required to subscribe to the real-time
+    #: user feed (`user/syncrequest` takes a user id, not an account id) and to tell
+    #: two logins apart when one trader holds several.
+    external_user_id: Mapped[str | None] = mapped_column(String(64))
     last_sync_at: Mapped[datetime | None]
     last_error: Mapped[str | None] = mapped_column(Text)
     #: Per-endpoint incremental sync cursors, e.g. ``{"fills": {"since_id": 91823}}``.

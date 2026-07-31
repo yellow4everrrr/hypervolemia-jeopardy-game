@@ -17,6 +17,7 @@ dependencies = [
     "pyjwt[crypto]>=2.10",
     "orjson>=3.10",
     "tenacity>=9.0",
+    "websockets>=14.1",
 ]
 
 [project.optional-dependencies]
