@@ -64,9 +64,18 @@ function ScenarioRow({ result }: { result: ScenarioResult }) {
         </span>
       </header>
 
+      {/* Zero is its own case, not a gain. `difference` arrives as an exact Decimal
+          string — "0E-8" for a scenario that repriced nothing — so `startsWith("-")` is
+          false and a two-branch conditional paints it the same green as a $200,000
+          improvement. Comparing the number rather than the string keeps every exponent
+          form of zero in the neutral branch. */}
       <p
         className={`mt-2 font-mono text-lg tabular-nums ${
-          result.difference.startsWith("-") ? "text-rose-300" : "text-emerald-300"
+          Number(result.difference) === 0
+            ? "text-slate-400"
+            : result.difference.startsWith("-")
+              ? "text-rose-300"
+              : "text-emerald-300"
         }`}
       >
         {formatMoney(result.difference)}

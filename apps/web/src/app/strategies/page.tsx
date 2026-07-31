@@ -111,11 +111,24 @@ function ImpactRow({ impact }: { impact: RuleImpact }) {
           {evaluated.toLocaleString("en-US")}
         </span>
       </td>
+      {/* "never broken" and "never checked" are different facts, and only one of them is
+          a compliment. A rule with no evaluable trades — a planned R multiple nobody
+          recorded, a daily loss limit not set on the account — has zero violations out of
+          zero, and calling that "never broken" reports perfect discipline where there is
+          simply no evidence. It is the same mistake as rendering an undefined statistic
+          as a zero, which the whole evidence layer exists to prevent. */}
       <td className="px-3 py-2 text-right font-mono text-xs tabular-nums text-slate-400">
-        {impact.violations === 0 ? (
-          <span className="text-slate-600">never broken</span>
+        {evaluated === 0 ? (
+          <span
+            className="text-amber-400/70"
+            title="no trade carried the data this rule needs, so it was never checked"
+          >
+            not evaluable
+          </span>
+        ) : impact.violations === 0 ? (
+          <span className="text-emerald-400/70">never broken</span>
         ) : (
-          formatPercent(String(impact.violations / Math.max(evaluated, 1)), 1)
+          formatPercent(String(impact.violations / evaluated), 1)
         )}
       </td>
       <td
