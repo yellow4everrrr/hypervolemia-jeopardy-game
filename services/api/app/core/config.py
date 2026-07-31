@@ -11,7 +11,7 @@ from enum import StrEnum
 from functools import lru_cache
 from typing import Annotated, Literal
 
-from pydantic import Field, PostgresDsn, RedisDsn, field_validator
+from pydantic import Field, PostgresDsn, RedisDsn, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -65,6 +65,16 @@ class Settings(BaseSettings):
     s3_endpoint_url: str | None = None
     s3_bucket: str = "ledgerline-media"
     s3_region: str = "us-east-1"
+
+    # --- AI coach ----------------------------------------------------------------
+    #: Read from the environment like every other credential. Absent means the coach
+    #: endpoints refuse rather than silently returning nothing — an unconfigured model
+    #: is a deployment error, not a trader with no advice.
+    anthropic_api_key: SecretStr | None = None
+    ai_model: str = "claude-opus-5"
+    #: Cap on analyses per user per day. The coach is the most expensive path in the
+    #: product and the one a bored user will click repeatedly.
+    ai_daily_analysis_limit: Annotated[int, Field(ge=1, le=1000)] = 50
 
     # --- Observability -----------------------------------------------------------
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"

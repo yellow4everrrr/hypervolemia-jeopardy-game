@@ -22,8 +22,8 @@ reviewable, ships tests and docs, and leaves `main` deployable.
 | 6 | **Trade replay UI** | Lightweight Charts playback: play/pause/seek/speed, entry/exit/stop/target markers, risk box, P&L animation, indicators, drawings. | Planned (after 12) |
 | 7 | **Strategy builder & compliance engine** | Turns subjective "did I follow my plan?" into a scored, rule-by-rule verdict on every imported trade. | ✅ Complete |
 | 8 | **Pattern & setup detection** | Unsupervised clustering + hypothesis testing to surface hidden edges and leaks; automatic setup classification. | ✅ Complete |
-| 9 | **AI coach layer** | Claude as head quant researcher, constrained by a strict evidence contract: it may only cite metrics returned by the analytics engine. | ⏳ Next |
-| 10 | **What-if simulator** | Counterfactual re-simulation (different stop/target/RR/ATR trail/filters) with recomputed expectancy and significance. | Planned |
+| 9 | **AI coach layer** | Claude as head quant researcher, constrained by a strict evidence contract: it may only cite metrics returned by the analytics engine. | ✅ Complete |
+| 10 | **What-if simulator** | Counterfactual re-simulation (different stop/target/RR/ATR trail/filters) with recomputed expectancy and significance. | ⏳ Next |
 | 11 | **ML layer** | Success probability, expected R, optimal stop/target models with proper walk-forward validation and calibration. | Planned |
 | 12 | **Reports & scheduling** | Daily → annual reports with leak quantification and expected annual improvement. | Planned |
 | 13 | **Hardening & scale** | Partitioning, continuous aggregates, observability, rate limits, RLS, deployment. | Planned |
@@ -250,6 +250,44 @@ null battery exists:
 
 **Explicitly not in milestone 8:** natural-language interpretation of a pattern
 (milestone 9), and scheduled rescanning (milestone 13).
+
+---
+
+## Milestone 9 — delivered scope
+
+**Why this now.** Every prior milestone produces numbers. This is where they become
+advice — and where the product's single largest credibility risk lives. A fluent,
+confident sentence containing a number nobody computed is indistinguishable, to a
+reader, from a real one, and a trader who acts on it and loses money has been harmed by
+the product.
+
+Delivered:
+
+- **The coach never writes a number.** It writes `{{metric.key}}` placeholders and
+  Python substitutes the computed value ([ADR 0007](./adr/0007-coach-placeholders.md)).
+  The figure a trader reads is the computed figure *by construction*, not because a
+  checker caught a bad one afterwards.
+- An `EvidenceBundle` carrying each statistic with its sample size, confidence interval,
+  reliability, and — when undefined — the reason. Gaps are recorded explicitly, so the
+  model reports an absence rather than guessing at it.
+- A validator that rejects unknown keys, bare numerals that match no computed value,
+  invented precision, recommendations built on undefined statistics, and uncited claims.
+  Rejection is all-or-nothing; rejected analyses are stored so the rejection rate stays
+  visible.
+- Three claim tiers — `finding` / `observation` / `hypothesis` — with the prompt
+  prescribing which language each permits, so an untested observation cannot be phrased
+  as established.
+- `GET /coach/evidence` publishes the bundle with no model call: the claim that the coach
+  only interprets computed statistics is checkable by the trader, not just by us.
+- Recommendation tracking (`accepted` / `dismissed` / `resolved`), because the only
+  question that matters about coaching is whether acting on it changed the numbers.
+- 36 new tests, written adversarially — every one plays a model that has invented
+  something. `app/ai/` is barred from importing the Anthropic SDK by an architecture
+  test, so all of them run with no API key.
+
+**Explicitly not in milestone 9:** `ai_recommendations.expected_improvement` stays empty
+until the what-if simulator fills it. The model never writes an expected-improvement
+figure — that was ADR 0002's fourth mechanism and it remains intact.
 
 ---
 

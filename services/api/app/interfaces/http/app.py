@@ -16,6 +16,7 @@ from app.interfaces.http.middleware import RequestContextMiddleware
 from app.interfaces.http.routers import (
     analytics,
     broker,
+    coach,
     health,
     patterns,
     replay,
@@ -81,5 +82,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(strategies.router, prefix=f"{settings.api_prefix}/v1")
     app.include_router(strategies.compliance_router, prefix=f"{settings.api_prefix}/v1")
     app.include_router(patterns.router, prefix=f"{settings.api_prefix}/v1")
+    app.include_router(coach.router, prefix=f"{settings.api_prefix}/v1")
 
     return app

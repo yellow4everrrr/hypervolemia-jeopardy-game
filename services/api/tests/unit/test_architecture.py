@@ -79,6 +79,17 @@ def test_analytics_is_pure() -> None:
     assert _violations("analytics", FORBIDDEN_IN_DOMAIN) == []
 
 
+def test_the_evidence_contract_never_touches_a_model() -> None:
+    """The fabrication guarantee has to be testable without an API key.
+
+    ``app/ai/`` holds the evidence bundle, the placeholder contract and the validator —
+    the machinery that makes an invented statistic impossible. If it could import the
+    Anthropic SDK, the tests proving that guarantee would need a network, and a
+    guarantee that is expensive to check stops being checked.
+    """
+    assert _violations("ai", FORBIDDEN_IN_DOMAIN | {"anthropic"}) == []
+
+
 def test_application_depends_only_on_the_domain_and_its_ports() -> None:
     assert _violations("application", FORBIDDEN_IN_APPLICATION) == []
 
@@ -90,7 +101,7 @@ def test_core_stays_framework_free_apart_from_configuration() -> None:
 
 
 @pytest.mark.parametrize(
-    "package", ["domain", "application", "core", "infrastructure", "interfaces"]
+    "package", ["domain", "application", "core", "infrastructure", "interfaces", "ai"]
 )
 def test_every_package_is_importable(package: str) -> None:
     """A module that only imports under some conditions is a runtime failure waiting."""
