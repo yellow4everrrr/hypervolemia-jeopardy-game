@@ -68,6 +68,17 @@ def test_domain_has_no_outward_dependencies() -> None:
     assert _violations("domain", FORBIDDEN_IN_DOMAIN) == []
 
 
+def test_analytics_is_pure() -> None:
+    """Statistics must be computable over a list built in a test or a simulation.
+
+    The analytics package is reused by the what-if simulator (milestone 10), which
+    feeds it counterfactual trades that were never in the database. An import of
+    SQLAlchemy here would make that impossible and would also mean the AI layer's
+    evidence could not be reproduced offline.
+    """
+    assert _violations("analytics", FORBIDDEN_IN_DOMAIN) == []
+
+
 def test_application_depends_only_on_the_domain_and_its_ports() -> None:
     assert _violations("application", FORBIDDEN_IN_APPLICATION) == []
 

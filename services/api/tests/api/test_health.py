@@ -23,10 +23,37 @@ def test_liveness_does_not_touch_dependencies(client: TestClient) -> None:
     assert response.json()["status"] == "ok"
 
 
-def test_readiness_reports_a_missing_database_as_degraded(client: TestClient) -> None:
-    response = client.get("/health/ready")
-    assert response.status_code == 503
-    assert response.json()["checks"]["database"] == "unavailable"
+def test_readiness_reports_a_missing_database_as_degraded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Readiness must fail when the database is unreachable.
+
+    The unreachable database is configured explicitly rather than assumed absent: a
+    developer with Postgres running locally would otherwise see this test pass for the
+    wrong reason, or fail for one.
+    """
+    from app.core.config import get_settings
+    from app.infrastructure.db.session import get_engine, get_sessionmaker
+
+    get_settings.cache_clear()
+    get_engine.cache_clear()
+    get_sessionmaker.cache_clear()
+    monkeypatch.setenv(
+        "LEDGERLINE_DATABASE_URL",
+        "postgresql+asyncpg://nobody@127.0.0.1:59999/nothing",
+    )
+    monkeypatch.setenv("LEDGERLINE_ENVIRONMENT", "test")
+
+    try:
+        probe = TestClient(create_app(), raise_server_exceptions=False)
+        response = probe.get("/health/ready")
+
+        assert response.status_code == 503
+        assert response.json()["checks"]["database"] == "unavailable"
+    finally:
+        get_settings.cache_clear()
+        get_engine.cache_clear()
+        get_sessionmaker.cache_clear()
 
 
 def test_request_id_is_echoed(client: TestClient) -> None:

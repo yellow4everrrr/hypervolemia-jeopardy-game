@@ -16,8 +16,8 @@ reviewable, ships tests and docs, and leaves `main` deployable.
 |---|-----------|---------------|--------|
 | 1 | **Foundation, domain model & schema** | Nothing downstream is trustworthy if trade reconstruction or the schema is wrong. Establishes clean architecture, the FIFO execution→trade engine, the normalized Postgres/TimescaleDB schema, and the test/CI/dev harness. | ✅ Complete |
 | 2 | **Tradovate integration & sync pipeline** | Zero manual journaling is the core promise. Token lifecycle, REST backfill, WebSocket live fills, idempotent ingestion, safe sync cursors, reconciliation against broker P/L. | ✅ Complete |
-| 3 | **Analytics engine** | Every AI claim must trace to a deterministic Python number. Expectancy, profit factor, Sharpe/Sortino, SQN, Kelly, risk of ruin, drawdown, MAE/MFE, edge ratio, Monte Carlo, bootstrap confidence intervals, and the full segmentation cube. | ⏳ Next |
-| 4 | **Market data & replay engine** | Replay and MAE/MFE need bar data. TimescaleDB hypertables, bar ingestion, replay window computation, marker generation, S3 snapshot pipeline. | Planned |
+| 3 | **Analytics engine** | Every AI claim must trace to a deterministic Python number. Expectancy, profit factor, Sharpe/Sortino, SQN, Kelly, risk of ruin, drawdown, edge ratio, Monte Carlo, bootstrap confidence intervals, the full segmentation cube, and the significance control that stops it manufacturing edges. | ✅ Complete |
+| 4 | **Market data & replay engine** | Replay and MAE/MFE need bar data. TimescaleDB hypertables, bar ingestion, replay window computation, marker generation, S3 snapshot pipeline. | ⏳ Next |
 | 5 | **Frontend foundation** | Next.js + Clerk + design system, dashboard, trade blotter, trade detail. Bloomberg density with Linear polish. | Planned |
 | 6 | **Trade replay UI** | Lightweight Charts playback: play/pause/seek/speed, entry/exit/stop/target markers, risk box, P&L animation, indicators, drawings. | Planned |
 | 7 | **Strategy builder & compliance engine** | Turns subjective "did I follow my plan?" into a scored, rule-by-rule verdict on every imported trade. | Planned |
@@ -98,6 +98,41 @@ single trade defines (milestone 3).
 **Not yet verified against a live Tradovate account** — the integration is built from the
 published specification and tested against a mocked API. See
 [the integration notes](./tradovate-integration.md) for what that leaves open.
+
+---
+
+## Milestone 3 — delivered scope
+
+**Why this third.** Milestones 1 and 2 produce trustworthy trades. This is where they
+become answers. It also has to come before the AI layer: ADR 0002 says the model may only
+cite computed statistics, and that requires the computed set to exist first as a
+concrete, enumerable object.
+
+Delivered:
+
+- Pure analytics package in exact decimal arithmetic — no floats anywhere, including
+  square roots, using Python's `decimal` module.
+- Core metrics: expectancy (with interval), expectancy in R, win rate, profit factor,
+  payoff ratio, SQN, edge ratio, cost ratio, hold time split by outcome, and full
+  distribution shape including skew and kurtosis.
+- Equity curve, drawdown periods with recovery, streak analysis, daily series.
+- Sharpe and Sortino computed on the **daily** series with an explicit basis flag; MAR;
+  Kelly with half-Kelly and warnings.
+- Bootstrap confidence intervals, Monte Carlo simulation, simulation-based risk of ruin,
+  probability of profit — all seeded and reproducible, resampled in scaled integers.
+- Permutation testing with Benjamini–Hochberg FDR control, and a segmentation cube over
+  ten dimensions where nothing is a finding until it survives the scan
+  ([ADR 0004](./adr/0004-analytics-honesty.md)).
+- `AnalyticsReport.to_payload()` / `metric_keys()` — the AI layer's evidence base and
+  its citable allow-list.
+- Persistence to `performance_metrics`, `equity_curve_points` and `risk_metrics`, plus
+  four HTTP endpoints.
+- 169 new tests, expected values computed by hand, including two that assert the engine
+  finds *nothing* in pure noise.
+
+**Explicitly not in milestone 3:** MAE/MFE and edge ratio return undefined until
+milestone 4 supplies bar data; scheduled recomputation waits for the worker in
+milestone 13.
 
 ---
 

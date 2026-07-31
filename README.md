@@ -12,14 +12,14 @@ was not given is rejected before it reaches the trader.
 
 ## Status
 
-Milestones 1–2 of 13 are complete: foundation, domain model, database schema, and the
-Tradovate sync pipeline. See [`docs/roadmap.md`](docs/roadmap.md) for what each milestone
-delivers and why it exists in that order.
+Milestones 1–3 of 13 are complete: foundation, Tradovate sync, and the analytics engine.
+See [`docs/roadmap.md`](docs/roadmap.md) for what each milestone delivers and why it
+exists in that order.
 
 | | |
 |---|---|
-| **Delivered** | Clean-architecture backend · FIFO trade reconstruction · 33-table Postgres/TimescaleDB schema · idempotent ingestion · Tradovate REST + WebSocket sync with cursor safety · broker reconciliation · FastAPI with Clerk auth · 237 tests · CI |
-| **Next** | Milestone 3 — analytics engine: expectancy, Sharpe/Sortino, SQN, Kelly, risk of ruin, drawdown, MAE/MFE, Monte Carlo, segmentation |
+| **Delivered** | Clean-architecture backend · FIFO trade reconstruction · 33-table Postgres/TimescaleDB schema · idempotent ingestion · Tradovate REST + WebSocket sync with cursor safety · institutional analytics with bootstrap intervals and FDR-controlled segmentation · FastAPI with Clerk auth · 406 tests · CI |
+| **Next** | Milestone 4 — market data and replay: TimescaleDB bar ingestion, MAE/MFE, replay windows, screenshot pipeline |
 
 ## Quick start
 
@@ -51,6 +51,7 @@ The API serves OpenAPI docs at http://localhost:8000/docs outside production.
 services/api/            FastAPI backend
   app/core/              settings, logging, UUIDv7, Decimal helpers, errors
   app/domain/            trading rules — pure, no I/O, no framework imports
+  app/analytics/         statistics — pure, exact decimal, seeded resampling
   app/application/       use cases and the ports they depend on
   app/infrastructure/    SQLAlchemy models, repositories, brokers, secrets
   app/interfaces/http/   routers, schemas, auth, middleware
@@ -83,6 +84,8 @@ These are enforced by tests, types or the schema, not by convention:
 7. **The sync cursor never advances past a fill that was not ingested.** A fill we
    cannot interpret is deferred with a reason and retried, never skipped.
 8. **Broker credentials never touch the database.** Only a secret-store pointer does.
+9. **No statistic is reported without its sample size,** and none is called a finding
+   until it survives significance testing adjusted for the size of the scan.
 
 ## Testing
 
@@ -105,6 +108,8 @@ the migrations, and rolls back to base.
 - [ADR 0001](docs/adr/0001-trade-reconstruction.md) — why round turns, why FIFO, why pure
 - [ADR 0002](docs/adr/0002-ai-evidence-contract.md) — how the AI is prevented from inventing statistics
 - [ADR 0003](docs/adr/0003-broker-sync.md) — why the sync cursor never skips a fill
+- [ADR 0004](docs/adr/0004-analytics-honesty.md) — why unproven segments are never findings
+- [Analytics](docs/analytics.md) — every statistic, its definition, and what it refuses to compute
 - [Tradovate integration](docs/tradovate-integration.md) — API specifics, auth, framing, known gaps
 
 ## Tech stack
