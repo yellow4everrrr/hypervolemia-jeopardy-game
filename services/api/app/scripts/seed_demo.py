@@ -87,6 +87,19 @@ LEAK_AFTER = 6
 WIN_RATE_EARLY = 0.55
 WIN_RATE_LATE = 0.31
 
+#: How far a losing trade ran in your favour before failing, as (share, low, high) in R.
+#:
+#: A mixture rather than one draw, because the shape is the point and a single
+#: distribution cannot state it: most losers barely ticked up, some gave back a real
+#: move, and a few were up a full unit of risk before it went. Written as explicit
+#: shares so the intent is checkable — roughly 13% clear 0.6R and 3% clear 1R.
+#:
+#: The top band reaching past 1R is what stops MFE from being a win/loss label. Winners
+#: here run from about 0.6R upward; a cap below that leaves the two distributions
+#: disjoint, and the pattern engine then rediscovers the outcome as a cluster. See
+#: :func:`_excursions`.
+LOSER_MFE_BANDS = ((0.85, 0.0, 0.5), (0.12, 0.5, 1.0), (0.03, 1.0, 1.8))
+
 #: Bars written for one trade, so the replay screen has a chart. One trade rather than all
 #: of them because 1,400 trades of minute bars is a quarter of a million rows for a demo.
 #:
@@ -111,25 +124,56 @@ def _excursions(
     * ``mae_r <= min(realized_r, 0)`` — you cannot exit worse than the worst price it
       ever reached.
 
-    Within those bounds the *distribution* still has to be plausible, and that is what the
-    first version of this script got wrong. Giving losers a large favourable excursion is
-    arithmetically legal and behaviourally absurd: it describes a trader who was up two
-    units of risk and chose to lose one. It also silently rigs the exit simulator, since
-    every counterfactual profit target fills on a trade whose MFE cleared it.
+    Within those bounds the *distribution* still has to be plausible, and this function has
+    now been wrong in both directions.
 
-    So a winner ran a little past where it was closed, and a loser mostly did not run at
-    all.
+    The first version set ``mfe_r = abs(r) + uniform(0.05, 0.9)``, giving losers a
+    favourable excursion of up to 1.8R — a trader who was up nearly two units of risk and
+    chose to lose one. The what-if simulator duly reported that a 1R target would have
+    earned an extra $248,000, because under that rule most losers became winners.
+
+    The correction over-steered. Losers drew MFE from ``uniform(0, 0.45)`` while winners
+    drew ``r + uniform(0.05, 0.60)``, and since the smallest winner was around 0.6R the
+    two ranges came out **disjoint**: across 1,447 trades, winners' MFE ran 0.68–2.99 and
+    losers' 0.00–0.45, with an empty gap between them and not one loser in 714 ever
+    reaching a full 1R in your favour. The docstring said such a trade "is a real event,
+    but it is not the common one"; the code made it impossible.
+
+    A history where MFE alone classifies win from loss perfectly is not a history. It also
+    breaks two engines that read these columns:
+
+    * **Pattern clustering** partitioned the sample into a 100%-winner cluster and a
+      6%-winner cluster and reported them as established findings worth -$762,759 and
+      +$687,586 a year. Those clusters were the win/loss label, rediscovered through
+      ``mae_r``/``mfe_r``. This is the same shape as the ``capture_efficiency`` leak
+      (ADR 0015) arriving through the data rather than through a feature.
+    * **The what-if simulator** could never fill a profit target on a losing trade, so
+      every "take profit at N" scenario could only ever cost money — the mirror image of
+      the original defect, and just as untrue.
+
+    So the tail has to be present but thin: a loser that briefly ran a full unit of risk in
+    your favour before failing is uncommon, not unheard of. :data:`LOSER_MFE_BANDS` says
+    how uncommon.
     """
     if realized_r > 0:
         # Exited near, but not at, the high. A large excess here is what a trader means
         # by "I left money on the table", and it should be the exception.
         mfe = realized_r + Decimal(str(round(rng.uniform(0.05, 0.60), 2)))
-        mae = Decimal(str(round(-rng.uniform(0.10, 0.80), 2)))
+        # Bounded above -1R: a winner that touched a full unit of risk against it would
+        # have been stopped out and would not be a winner.
+        mae = Decimal(str(round(-rng.uniform(0.10, 0.95), 2)))
     else:
-        # A losing trade that ticked briefly in your favour before failing. Capped well
-        # under 1R: a trade that reaches a full unit of risk in profit and still loses is
-        # a real event, but it is not the common one.
-        mfe = Decimal(str(round(rng.uniform(0.0, 0.45), 2)))
+        # Overlapping the winners' range is the point: without it, MFE is the outcome
+        # label wearing a different name.
+        draw = rng.random()
+        cumulative = 0.0
+        low, high = LOSER_MFE_BANDS[-1][1:]
+        for share, band_low, band_high in LOSER_MFE_BANDS:
+            cumulative += share
+            if draw <= cumulative:
+                low, high = band_low, band_high
+                break
+        mfe = Decimal(str(round(rng.uniform(low, high), 2)))
         mae = realized_r - Decimal(str(round(rng.uniform(0.0, 0.20), 2)))
 
     assert mfe >= max(realized_r, Decimal(0)), "MFE below the realized result"

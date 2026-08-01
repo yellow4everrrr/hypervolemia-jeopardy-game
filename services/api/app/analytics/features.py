@@ -119,21 +119,34 @@ FEATURES: tuple[Feature, ...] = (
         higher_is="long",
         lower_is="short",
     ),
-    Feature(
-        name="mae_r",
-        description="maximum adverse excursion in R",
-        extract=lambda trade: trade.mae_r,
-        higher_is="went less far against you",
-        lower_is="went deep underwater before resolving",
-    ),
-    Feature(
-        name="mfe_r",
-        description="maximum favourable excursion in R",
-        extract=lambda trade: trade.mfe_r,
-        higher_is="offered a large move in your favour",
-        lower_is="never moved far in your favour",
-    ),
 )
+
+#: Excursions are **not** here, and removing them is the second time this feature space
+#: has had to give up a dimension for the same reason.
+#:
+#: ``mae_r`` and ``mfe_r`` pass the per-feature leakage probe honestly: hold everything
+#: else fixed, vary the outcome, and neither value moves. They are properties of the price
+#: path, not functions of the exit. What the probe cannot see is that together they
+#: *bracket* the outcome — ``mae_r <= r_multiple <= mfe_r`` is true by definition, since a
+#: trade cannot be exited better than the best price it reached or worse than the worst.
+#: Two features that bound a quantity from either side locate it, and standardised
+#: Euclidean distance over the pair separates the sign of the result almost perfectly.
+#:
+#: Measured on a 1,403-trade history with realistic excursions: clustering *with* the pair
+#: produced two groups that were 97.0% and 11.9% winners — a 92.2% accurate win/loss
+#: classifier. The permutation test then confirmed, correctly and uselessly, that the two
+#: groups had different P&L, and the Patterns page published them as established findings
+#: with annual impacts of -$762,759 and +$687,586. Dropping the pair leaves three clusters
+#: that are 45–54% winners, which is chance: the clusters became behavioural, and the
+#: question "did these groups perform differently?" became a real question again.
+#:
+#: The finding they produced was also unusable even if it had been sound. "Trades that
+#: never moved far in your favour lost money" names no decision: MFE is not knowable at
+#: entry, so there is no rule a trader could follow to avoid that group.
+#:
+#: They remain available for *describing* a cluster and for the excursion statistics on
+#: the dashboard. The objection is to clustering on them, not to measuring them.
+
 
 #: Outcome is deliberately **not** a feature. Clustering on P&L and then testing whether
 #: the clusters differ in P&L is circular — it always finds a "losing pattern", because

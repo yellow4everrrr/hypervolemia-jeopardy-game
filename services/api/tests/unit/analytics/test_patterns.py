@@ -367,20 +367,24 @@ def test_no_setups_are_proposed_without_a_clustering() -> None:
 
 
 def test_missing_features_are_dropped_rather_than_imputed() -> None:
-    """Filling a missing R multiple with a zero invents a trade that did not happen."""
+    """Filling a missing duration with a zero invents a trade that did not happen."""
     trades = [
-        TradeRecord(**{**_as_dict(trade), "mae_r": None, "mfe_r": None, "r_multiple": None})
+        TradeRecord(**{**_as_dict(trade), "duration_seconds": None, "entry_hour": None})
         for trade in build_trades(120, 4)
     ]
 
     matrix = build_matrix(trades)
 
-    assert "mae_r" in matrix.dropped_features
-    assert "mfe_r" in matrix.dropped_features
-    # `capture_efficiency` was asserted here too, until it was removed from the feature
-    # set for reading the outcome (ADR 0015). A feature that does not exist cannot be
-    # dropped, and nothing about the missing-value rule this test covers depended on it.
-    assert "capture_efficiency" not in {feature.name for feature in matrix.features}
+    assert "duration_seconds" in matrix.dropped_features
+    assert "entry_hour" in matrix.dropped_features
+    # This test used to blank `mae_r`/`mfe_r`, and before that asserted on
+    # `capture_efficiency`. All three have since left the feature set for reading the
+    # outcome — `capture_efficiency` directly (ADR 0015) and the excursion pair by
+    # bracketing it (ADR 0020). A feature that does not exist cannot be dropped, and the
+    # missing-value rule this test covers never depended on which feature was absent.
+    assert {"capture_efficiency", "mae_r", "mfe_r"}.isdisjoint(
+        {feature.name for feature in matrix.features}
+    )
     # No trade is lost: the features went, the sample stayed.
     assert matrix.size == 120
     assert matrix.coverage == 1

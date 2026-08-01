@@ -21,13 +21,15 @@ many operations separate the two.
 
 from __future__ import annotations
 
+import random
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
 
-from app.analytics.features import FEATURES, Feature
+from app.analytics.clustering import choose_clustering, trades_in_cluster
+from app.analytics.features import FEATURES, Feature, build_matrix
 from app.analytics.types import TradeRecord
 from app.core.ids import uuid7
 from app.domain.common.enums import Direction
@@ -160,3 +162,113 @@ def test_the_sign_of_a_leaking_feature_is_the_win_loss_label() -> None:
     ):
         efficiency = r_multiple / mfe_r
         assert (efficiency > 0) == (r_multiple > 0)
+
+
+class TestTheFeatureSetAsAWhole:
+    """The per-feature probe above is necessary and not sufficient.
+
+    It varies one trade's outcome and requires each feature to hold still. ``mae_r`` and
+    ``mfe_r`` pass it honestly — they are properties of the price path, and changing where
+    a trade was exited does not change where it travelled. Yet clustering on them
+    reconstructed the win/loss label at 92% accuracy on a realistic 1,403-trade history,
+    because ``mae_r <= r_multiple <= mfe_r`` holds by definition: neither feature *is* the
+    outcome, but together they bracket it, and two bounds locate a value.
+
+    No test of one feature at a time can see that. This probe asks the question the engine
+    actually depends on — **can the clusters be used to tell winners from losers?** — of
+    the whole feature space at once.
+    """
+
+    def history(self, rng: random.Random, count: int = 600) -> list[TradeRecord]:
+        """Trades whose outcome is unrelated to when, how big, or how long.
+
+        Built so the honest answer is "these clusters say nothing about P&L": hour, size,
+        duration and direction are drawn independently of the result. Excursions follow
+        the identities every real trade obeys. Any classifier accuracy much above chance
+        therefore comes from the feature space, not from the data.
+        """
+        trades = []
+        for _ in range(count):
+            win = rng.random() < 0.5
+            r = Decimal(str(round(rng.uniform(0.4, 2.5) if win else -rng.uniform(0.5, 1.2), 2)))
+            if win:
+                mfe = r + Decimal(str(round(rng.uniform(0.05, 0.60), 2)))
+                mae = Decimal(str(round(-rng.uniform(0.10, 0.95), 2)))
+            else:
+                mfe = Decimal(str(round(rng.uniform(0.0, 0.9), 2)))
+                mae = r - Decimal(str(round(rng.uniform(0.0, 0.20), 2)))
+            trades.append(
+                TradeRecord(
+                    trade_id=uuid7(),
+                    account_id=uuid7(),
+                    opened_at=datetime(2026, 3, 2, tzinfo=UTC),
+                    closed_at=datetime(2026, 3, 2, 1, tzinfo=UTC),
+                    direction=Direction.LONG if rng.random() < 0.5 else Direction.SHORT,
+                    net_pnl=r * Decimal(500),
+                    gross_pnl=r * Decimal(500) + Decimal("2.49"),
+                    r_multiple=r,
+                    duration_seconds=rng.randint(60, 3600),
+                    entry_hour=rng.randint(9, 15),
+                    entry_weekday=rng.randint(1, 5),
+                    quantity=Decimal(rng.randint(1, 3)),
+                    mae_r=mae,
+                    mfe_r=mfe,
+                )
+            )
+        return trades
+
+    def separation(self, trades: list[TradeRecord]) -> float:
+        """Best accuracy achievable by reading a cluster as a win/loss prediction."""
+        matrix = build_matrix(trades, features=FEATURES)
+        clustering = choose_clustering(matrix.rows, seed=20260731, references=20)
+        if clustering is None:
+            return 0.5  # No structure found is the same as no information about outcome.
+
+        best = 0.5
+        for index in range(clustering.k):
+            members = trades_in_cluster(clustering, matrix.trades, index)
+            others = [
+                trade
+                for position, trade in enumerate(matrix.trades)
+                if clustering.labels[position] != index
+            ]
+            if not members or not others:
+                continue
+            as_winners = sum(1 for t in members if t.net_pnl > 0) + sum(
+                1 for t in others if t.net_pnl <= 0
+            )
+            as_losers = sum(1 for t in members if t.net_pnl <= 0) + sum(
+                1 for t in others if t.net_pnl > 0
+            )
+            best = max(best, max(as_winners, as_losers) / len(trades))
+        return best
+
+    def test_clusters_do_not_reconstruct_the_win_loss_label(self) -> None:
+        """**The test this class exists for.**
+
+        Outcome is independent of every honest feature in this history, so a cluster
+        should be no better at predicting win from loss than a coin. With ``mae_r`` and
+        ``mfe_r`` in the feature space this reached 0.92; without them it sits at chance.
+
+        The threshold is loose on purpose. It is not measuring clustering quality — it is
+        drawing a line between "these groups happen to differ a little" and "these groups
+        *are* the outcome", and only the second is a defect.
+        """
+        accuracy = self.separation(self.history(random.Random(20260731)))
+
+        assert accuracy < 0.70, (
+            f"clusters predict win/loss at {accuracy:.1%} on a history where outcome is "
+            "independent of every feature — the feature space is encoding the result"
+        )
+
+    def test_the_excursion_pair_is_what_would_break_it(self) -> None:
+        """Names the specific combination, so a future re-add fails loudly and legibly.
+
+        Without this, someone re-adding `mfe_r` sees only that a generic separation test
+        went red, with no indication of which dimension did it or why a feature that
+        passes the per-feature probe could be the cause.
+        """
+        assert {"mae_r", "mfe_r"}.isdisjoint({feature.name for feature in FEATURES}), (
+            "mae_r and mfe_r bracket the outcome (mae_r <= r <= mfe_r), so clustering on "
+            "them partitions the sample into winners and losers. See EXCLUDED_FROM_CLUSTERING."
+        )
