@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useReducer } from "react";
+import { useEffect, useMemo, useReducer, useRef } from "react";
 
 import {
   type Bar,
@@ -9,6 +9,7 @@ import {
   type Speed,
   SPEEDS,
   crossesGap,
+  entryIndex,
   intervalFor,
   progress,
   reduce,
@@ -23,12 +24,31 @@ import { formatTime } from "@/lib/format";
  * a three-minute scalp has three data points, and a viewer who does not know that will
  * read the shape between them as something that happened.
  */
-export function usePlayback(bars: Bar[]) {
+export function usePlayback(bars: Bar[], tradeStart?: string | null) {
+  const origin = useMemo(() => entryIndex(bars, tradeStart), [bars, tradeStart]);
+
   const [state, dispatch] = useReducer(
     (current: PlaybackState, action: Parameters<typeof reduce>[1]) =>
-      reduce(current, action, bars.length),
+      reduce(current, action, bars.length, origin),
     { index: -1, playing: false, speed: 1 as Speed },
   );
+
+  // Seek to the entry once, when the bars arrive.
+  //
+  // The reducer's initial state cannot do this: the component renders before the query
+  // resolves, so at mount `bars` is empty and there is no entry to seek to. Without this
+  // the chart stays at -1 for the whole session and the fix does nothing — the state is
+  // correct in the reducer and never reached in the browser.
+  //
+  // Guarded by a ref rather than by comparing indices, so it fires exactly once per
+  // loaded series. Re-seeking whenever `origin` changed would drag the playhead back to
+  // the entry underneath a trader who had scrubbed away from it.
+  const seeded = useRef(false);
+  useEffect(() => {
+    if (seeded.current || bars.length === 0) return;
+    seeded.current = true;
+    if (origin >= 0) dispatch({ type: "seek", index: origin });
+  }, [bars.length, origin]);
 
   useEffect(() => {
     if (!state.playing) return;

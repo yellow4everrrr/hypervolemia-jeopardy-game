@@ -212,3 +212,49 @@ test("captured chart images decode in the browser", async ({ page }) => {
     );
   }
 });
+
+test("the replay opens on the entry rather than on an empty chart", async ({ page }) => {
+  /**
+   * The unit tests pin the arithmetic. Only a browser can confirm the pane actually has
+   * candles in it on first paint — the state can be right in the reducer and never reach
+   * the canvas, which is exactly what happens if the seek-on-load effect is dropped: the
+   * component mounts before the query resolves, so there are no bars to seek within, and
+   * the chart sits at index -1 for the whole session.
+   *
+   * Sampling pixels rather than reading the bar counter, because the counter showed
+   * `bar 0 / 91` and looked plausible while the pane was blank.
+   */
+  const apiBase = process.env.SMOKE_API_BASE ?? "http://127.0.0.1:8000/api/v1";
+  const trades = await page.request.get(`${apiBase}/trades?limit=1`, {
+    headers: { "X-Debug-User": process.env.SMOKE_DEV_USER ?? "demo" },
+  });
+  const { items } = (await trades.json()) as { items: { id: string }[] };
+
+  await page.goto(`/trades/${items[0]!.id}`);
+  await page.waitForSelector("canvas");
+  await page.waitForTimeout(1500);
+
+  const painted = await page.evaluate(() => {
+    // The widest canvas is the price pane; the narrow ones are the axes.
+    const canvas = Array.from(document.querySelectorAll("canvas")).sort(
+      (a, b) => b.width - a.width,
+    )[0]!;
+    const context = canvas.getContext("2d");
+    if (!context) return { colours: 0 };
+    const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+    const seen = new Set<string>();
+    for (let i = 0; i < data.length; i += 4 * 37) {
+      seen.add(`${data[i]},${data[i + 1]},${data[i + 2]}`);
+    }
+    return { colours: seen.size };
+  });
+
+  // Background plus gridlines alone is a handful of colours; candles add many more.
+  expect(
+    painted.colours,
+    "the replay chart is blank on first load",
+  ).toBeGreaterThan(6);
+
+  const counter = await page.locator("text=/bar \\d+ \\/ \\d+/").first().innerText();
+  expect(counter, `replay opened at bar 0: ${counter}`).not.toMatch(/bar 0 \//);
+});

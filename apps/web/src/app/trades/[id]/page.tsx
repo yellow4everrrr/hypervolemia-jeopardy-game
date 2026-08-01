@@ -9,7 +9,7 @@ import { Screenshots } from "@/components/replay/screenshots";
 import { PageHeader } from "@/components/shell";
 import { request } from "@/lib/api";
 import { formatMoney, formatPrice } from "@/lib/format";
-import { revealed, type Bar, type Gap } from "@/lib/playback";
+import { hasReached, revealed, type Bar, type Gap } from "@/lib/playback";
 
 interface ReplayPayload {
   /** The resolution the window *chose*, from the trade's duration. */
@@ -22,6 +22,10 @@ interface ReplayPayload {
    * do not have.
    */
   served_timeframe: string;
+  /** When the trade opened. The replay opens here rather than on an empty chart. */
+  trade_start: string;
+  /** When it closed — used to hold the exit level back until playback reaches it. */
+  trade_end: string;
   bars: Bar[];
   gaps: Gap[];
   bar_count: number;
@@ -56,8 +60,16 @@ export default function TradeReplayPage({
   });
 
   const bars = data?.bars ?? [];
-  const { state, dispatch } = usePlayback(bars);
+  const { state, dispatch } = usePlayback(bars, data?.trade_start);
   const shown = revealed(bars, state);
+
+  // Whether playback has reached the exit yet. The markers already hide themselves this
+  // way; the *price line* did not, so the exit level sat on the axis from the first
+  // frame — labelled, in a distinct colour, at a price the replay had not arrived at.
+  // The chart was answering "where does this end?" before the trader had looked at the
+  // setup, which is the contamination ADR 0018 describes, on the screen where reviewing
+  // the decision is the whole point.
+  const reachedExit = hasReached(shown, data?.trade_end);
 
   const priceLines: PriceLine[] = data
     ? [
@@ -67,7 +79,7 @@ export default function TradeReplayPage({
           color: "#38bdf8",
         },
         {
-          price: data.trade.avg_exit_price,
+          price: reachedExit ? data.trade.avg_exit_price : null,
           label: "exit",
           color: "#fbbf24",
         },

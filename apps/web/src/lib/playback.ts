@@ -49,6 +49,39 @@ export interface PlaybackState {
 
 export const INITIAL: PlaybackState = { index: -1, playing: false, speed: 1 };
 
+/**
+ * Where a replay should sit before anyone presses play: the entry bar.
+ *
+ * The screen used to open at index -1, which is a legal state — nothing revealed — and
+ * renders as an empty pane with axes. It is also the first thing anyone sees of the
+ * replay, and it looks exactly like a chart whose data failed to load. That reading was
+ * not far-fetched: a genuinely blank replay was a real defect (ADR 0016), and the empty
+ * pane produced by a healthy trade at index -1 is pixel-for-pixel the same.
+ *
+ * Opening at the *entry* rather than at the end is the part that matters. Revealing the
+ * whole series would show how the trade finished before the trader has looked at the
+ * setup, which is the same contamination the before-entry screenshot exists to prevent
+ * (ADR 0018) — on the screen where reviewing the decision is the entire point. Opening at
+ * the entry shows the context that was on the chart when the decision was made, and not
+ * one bar more.
+ *
+ * Returns -1 when no bar sits at or before the entry, which leaves the previous
+ * behaviour intact for a trade whose context bars were never backfilled.
+ */
+export function entryIndex(bars: Bar[], tradeStart: string | null | undefined): number {
+  if (!tradeStart) return -1;
+  const entry = Date.parse(tradeStart);
+  if (Number.isNaN(entry)) return -1;
+
+  let found = -1;
+  for (let index = 0; index < bars.length; index += 1) {
+    const at = Date.parse(bars[index]!.ts);
+    if (Number.isNaN(at) || at > entry) break;
+    found = index;
+  }
+  return found;
+}
+
 export type PlaybackAction =
   | { type: "play" }
   | { type: "pause" }
@@ -63,15 +96,23 @@ export function reduce(
   state: PlaybackState,
   action: PlaybackAction,
   total: number,
+  /**
+   * The bar the replay opens and resets to — the entry, via `entryIndex`.
+   *
+   * Defaults to -1 so a caller that has no notion of an entry keeps the old behaviour of
+   * starting from nothing revealed.
+   */
+  origin = -1,
 ): PlaybackState {
   const last = total - 1;
 
   switch (action.type) {
     case "play":
       // Playing from the end restarts rather than doing nothing, which is what a user
-      // pressing play on a finished replay means.
+      // pressing play on a finished replay means. It restarts at the origin, so replaying
+      // shows the trade again from its entry rather than from an empty chart.
       return state.index >= last
-        ? { ...state, index: -1, playing: true }
+        ? { ...state, index: clamp(origin, -1, last), playing: true }
         : { ...state, playing: true };
 
     case "pause":
@@ -96,7 +137,9 @@ export function reduce(
       return { ...state, speed: action.speed };
 
     case "reset":
-      return { ...INITIAL, speed: state.speed };
+      // Back to the entry, not to an empty chart. Reset means "start this replay over",
+      // and the state it started in is the one this returns to.
+      return { ...INITIAL, speed: state.speed, index: clamp(origin, -1, last) };
 
     case "tick": {
       if (!state.playing) return state;
@@ -150,4 +193,27 @@ export function crossesGap(bars: Bar[], index: number, gaps: Gap[]): Gap | null 
 /** Bars revealed so far. An empty slice at index -1 is a valid state, not an error. */
 export function revealed(bars: Bar[], state: PlaybackState): Bar[] {
   return state.index < 0 ? [] : bars.slice(0, state.index + 1);
+}
+
+/**
+ * Whether playback has reached a moment yet — used to hold the exit level back.
+ *
+ * The exit *marker* was already hidden until the replay arrived at it. The exit *price
+ * line* was not: it was drawn from the trade record on the first frame, labelled, in its
+ * own colour, on the price axis. So the chart named the price the trade would end at
+ * before revealing a single bar of what led there. Two mechanisms for the same rule, only
+ * one of which was applied.
+ *
+ * Lives here rather than in the chart component because it is a comparison of two
+ * timestamps, and asserting it through a canvas-rendering library would test almost none
+ * of it.
+ */
+export function hasReached(shown: Bar[], moment: string | null | undefined): boolean {
+  if (!moment) return false;
+  const target = Date.parse(moment);
+  const last = shown.at(-1);
+  if (!last || Number.isNaN(target)) return false;
+
+  const at = Date.parse(last.ts);
+  return !Number.isNaN(at) && at >= target;
 }

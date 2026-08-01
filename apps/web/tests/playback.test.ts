@@ -17,6 +17,8 @@ import {
   type Bar,
   type Gap,
   crossesGap,
+  entryIndex,
+  hasReached,
   intervalFor,
   progress,
   reduce,
@@ -209,5 +211,101 @@ describe("gaps", () => {
     expect(
       crossesGap(BARS, 2, [{ from: "not-a-date", to: "also-not" }]),
     ).toBeNull();
+  });
+});
+
+describe("where the replay opens", () => {
+  /**
+   * The screen used to open at index -1 — nothing revealed — which renders as an empty
+   * pane with axes and reads as a chart whose data failed to load. That reading was not
+   * unreasonable: a genuinely blank replay was a real defect (ADR 0016), and a healthy
+   * trade sitting at -1 looks identical to it.
+   *
+   * The fix has to open at the *entry*, not at the end. Revealing the whole series would
+   * make the trade's outcome the first thing on screen, before the trader has looked at
+   * the setup — the contamination ADR 0018 exists to prevent, on the one screen where
+   * reviewing the decision is the entire point.
+   */
+  const ENTRY = "2026-05-04T14:32:00Z";
+
+  it("opens on the entry bar", () => {
+    expect(entryIndex(BARS, ENTRY)).toBe(2);
+  });
+
+  it("opens on the last bar at or before the entry when none lands on it exactly", () => {
+    expect(entryIndex(BARS, "2026-05-04T14:31:30Z")).toBe(1);
+  });
+
+  it("reveals nothing after the entry", () => {
+    // The assertion this change is for. An off-by-one here puts a bar the trader had not
+    // seen at decision time into the opening view, and it would look completely normal.
+    const opening = revealed(BARS, { ...INITIAL, index: entryIndex(BARS, ENTRY) });
+
+    expect(opening).toHaveLength(3);
+    for (const shown of opening) {
+      expect(Date.parse(shown.ts)).toBeLessThanOrEqual(Date.parse(ENTRY));
+    }
+  });
+
+  it("falls back to an empty chart when no bar precedes the entry", () => {
+    // A trade whose context bars were never backfilled. Better a blank pane than a
+    // silently wrong starting point.
+    expect(entryIndex(BARS, "2026-05-04T14:00:00Z")).toBe(-1);
+    expect(entryIndex([], ENTRY)).toBe(-1);
+    expect(entryIndex(BARS, null)).toBe(-1);
+    expect(entryIndex(BARS, "not a date")).toBe(-1);
+  });
+
+  it("resets to the entry rather than to an empty chart", () => {
+    const origin = entryIndex(BARS, ENTRY);
+    const scrubbed = reduce(INITIAL, { type: "seek", index: 4 }, TOTAL, origin);
+
+    expect(reduce(scrubbed, { type: "reset" }, TOTAL, origin).index).toBe(origin);
+  });
+
+  it("replays from the entry when play is pressed at the end", () => {
+    const origin = entryIndex(BARS, ENTRY);
+    const finished = reduce(INITIAL, { type: "seek", index: TOTAL - 1 }, TOTAL, origin);
+
+    const restarted = reduce(finished, { type: "play" }, TOTAL, origin);
+
+    expect(restarted.index).toBe(origin);
+    expect(restarted.playing).toBe(true);
+  });
+
+  it("still starts from nothing when no origin is supplied", () => {
+    // The default keeps every existing caller and every test above behaving as before.
+    expect(reduce(INITIAL, { type: "reset" }, TOTAL).index).toBe(-1);
+  });
+});
+
+describe("the exit level", () => {
+  /**
+   * The exit *marker* was already withheld until playback reached it. The exit *price
+   * line* was not — it came straight from the trade record, so the axis carried a
+   * labelled `exit 5219.10` from the first frame onward. The chart named the price the
+   * trade would close at before showing a single bar of what led there.
+   *
+   * That was survivable while the replay opened on an empty chart, because there was
+   * nothing to read it against. Opening on the entry makes it the most legible thing on
+   * screen at exactly the moment the trader is supposed to be judging the setup.
+   */
+  const EXIT = "2026-05-05T10:00:00Z";
+
+  it("is hidden before playback reaches it", () => {
+    const atEntry = revealed(BARS, { ...INITIAL, index: 2 });
+
+    expect(hasReached(atEntry, EXIT)).toBe(false);
+  });
+
+  it("appears once playback arrives", () => {
+    expect(hasReached(revealed(BARS, { ...INITIAL, index: 3 }), EXIT)).toBe(true);
+    expect(hasReached(revealed(BARS, { ...INITIAL, index: 4 }), EXIT)).toBe(true);
+  });
+
+  it("is hidden on an empty chart and for a trade with no recorded exit", () => {
+    expect(hasReached([], EXIT)).toBe(false);
+    expect(hasReached(BARS, null)).toBe(false);
+    expect(hasReached(BARS, "not a date")).toBe(false);
   });
 });
