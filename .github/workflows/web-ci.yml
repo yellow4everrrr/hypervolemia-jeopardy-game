@@ -2,9 +2,15 @@ name: Web CI
 
 # The frontend had no CI at all while thirteen milestones shipped. Every check below was
 # being run by hand, which means it was being run when someone remembered.
+#
+# `push` is limited to the default branch for the same reason as API CI: with
+# `branches: ["**"]` a branch with a pull request open ran everything twice, because a
+# push and a pull request produce different values for `github.ref` and so never shared
+# a concurrency group. A branch with no pull request open now gets no CI, which is the
+# ordinary arrangement — opening the pull request starts the checks.
 on:
   push:
-    branches: ["**"]
+    branches: [main]
     paths:
       - "apps/web/**"
       - "services/api/**"
@@ -15,8 +21,10 @@ on:
       - "services/api/**"
       - ".github/workflows/web-ci.yml"
 
+# Keyed so a pull-request run and a run of the same branch collapse into one group;
+# `github.ref` differs between the two events and therefore does not.
 concurrency:
-  group: web-ci-${{ github.ref }}
+  group: web-ci-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 env:
@@ -27,6 +35,9 @@ jobs:
   quality:
     name: Type-check, lint, unit tests
     runs-on: ubuntu-latest
+    # Runs in well under a minute; the cap is only there so a wedged install cannot sit
+    # on a runner for GitHub's default six hours.
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: apps/web
@@ -55,6 +66,9 @@ jobs:
   smoke:
     name: Every route renders against a real API
     runs-on: ubuntu-latest
+    # About three minutes: migrate, seed a year of trades, start the API, build the web
+    # app and drive twelve routes through a browser.
+    timeout-minutes: 25
 
     # The job the frontend most needed and least had. Six defects shipped green because
     # nothing ever loaded a page against a real API: a crashed route, three silently blank

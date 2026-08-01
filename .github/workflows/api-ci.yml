@@ -1,8 +1,19 @@
 name: API CI
 
+# `push` is limited to the default branch on purpose. With `branches: ["**"]` every push
+# to a branch that had a pull request open ran the whole suite twice — once for the push
+# and once for the pull request — because the two events produce different values for
+# `github.ref` (`refs/heads/<branch>` against `refs/pull/<n>/merge`) and so landed in
+# different concurrency groups, where neither cancelled the other. The test job takes
+# about twenty minutes, so that was forty minutes of runner time per push, doubled again
+# by Web CI doing the same thing.
+#
+# The trade-off is that a branch with no pull request open now gets no CI. That is the
+# ordinary arrangement and the right side to err on here: work not yet proposed for merge
+# is work nobody is waiting on, and opening the pull request starts the checks.
 on:
   push:
-    branches: ["**"]
+    branches: [main]
     paths:
       - "services/api/**"
       - ".github/workflows/api-ci.yml"
@@ -11,8 +22,11 @@ on:
       - "services/api/**"
       - ".github/workflows/api-ci.yml"
 
+# Keyed so a pull-request run and a run of the same branch collapse into one group.
+# `github.ref` does not: it is the merge ref for a pull request and the branch ref for a
+# push, which is what allowed the duplication above.
 concurrency:
-  group: api-ci-${{ github.ref }}
+  group: api-ci-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 env:
@@ -22,6 +36,10 @@ jobs:
   quality:
     name: Lint, type-check, test
     runs-on: ubuntu-latest
+    # The suite takes about twenty minutes with coverage on. Capped well above that but
+    # far below GitHub's 360-minute default, so a hung test costs half an hour rather
+    # than six hours of runner time.
+    timeout-minutes: 40
     defaults:
       run:
         working-directory: services/api
@@ -57,6 +75,8 @@ jobs:
   migrations:
     name: Migrations apply and roll back
     runs-on: ubuntu-latest
+    # Normally about two minutes; the margin is for a slow TimescaleDB container start.
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: services/api
