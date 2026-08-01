@@ -67,5 +67,26 @@ services:
       - -c
       - "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
+  web:
+    build:
+      context: ../apps/web
+      dockerfile: Dockerfile
+      args:
+        # Baked into the client bundle at build time — Next inlines every `NEXT_PUBLIC_*`
+        # during `next build`, so these cannot be moved to `environment:` below and have
+        # any effect. `localhost` rather than the `api` service name for the same reason:
+        # the value is used by the browser, which resolves it on the host, not inside the
+        # compose network.
+        NEXT_PUBLIC_API_BASE: http://localhost:8000/api/v1
+        # Mirrors the API's `LEDGERLINE_AUTH_DEV_BYPASS`. Lets the stack run end to end
+        # without provisioning Clerk; sent to a deployment with the bypass off it is
+        # ignored and the request fails authentication as an unauthenticated one should.
+        NEXT_PUBLIC_DEV_USER: demo
+    depends_on:
+      api:
+        condition: service_started
+    ports:
+      - "3000:3000"
+
 volumes:
   postgres-data:

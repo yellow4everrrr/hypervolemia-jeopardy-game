@@ -22,24 +22,46 @@ delivers and why the backend was built before the frontend.
 
 ## Quick start
 
+One command, with Docker, to a running journal with a year of trades in it:
+
 ```bash
-make install     # create .venv and install the API with dev extras
-make check       # lint (ruff) + type-check (mypy --strict) + test (pytest)
+make demo        # builds the stack, waits for the API, seeds 1,447 trades
 ```
 
-With Docker:
+Then open **http://localhost:3000**. No account, no broker, no configuration: the API
+runs with `LEDGERLINE_AUTH_DEV_BYPASS` and the frontend sends a matching debug identity,
+which `get_settings` refuses to enable outside local and test environments.
+
+The demo history is deliberately shaped rather than random — 250 sessions with a planted
+late-session leak sitting at the overtrading detector's threshold, so the pattern scan and
+the compliance engine each find it by their own route. See `app/scripts/seed_demo.py` for
+what it does and, more usefully, the two ways an earlier version of it got the data wrong.
+
+Every other entry point:
 
 ```bash
-make up          # TimescaleDB + Redis + API, migrations applied on boot
-make seed        # load ES/NQ/CL/GC contract specifications
+make up          # the stack without demo data
+make seed        # ES/NQ/CL/GC contract specifications only
+make seed-demo   # a year of demo trades into an already-running database
 make logs
+make down
 ```
 
 Without Docker, against a local Postgres:
 
 ```bash
 cp services/api/.env.example services/api/.env   # then edit
-make migrate && make seed && make dev
+make migrate && make seed && make seed-demo
+make dev                                          # API on :8000
+cd apps/web && npm ci && npm run dev              # frontend on :3000
+```
+
+Checks:
+
+```bash
+make check                    # ruff + mypy --strict + pytest
+make smoke                    # loads every route against the running stack
+cd apps/web && npm run check  # tsc + eslint + vitest
 ```
 
 The API serves OpenAPI docs at http://localhost:8000/docs outside production.

@@ -1,0 +1,11 @@
+# Everything the build produces or the runtime never reads. Keeping node_modules out
+# matters most: copying a host-built tree into the image is how a native module compiled
+# for the wrong platform ends up in production.
+node_modules
+.next
+out
+test-results
+playwright-report
+.git
+.env*.local
+*.log

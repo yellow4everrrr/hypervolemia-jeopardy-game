@@ -2,6 +2,7 @@
 SHELL := /bin/bash
 
 API := services/api
+WEB := apps/web
 VENV := .venv
 PY := $(VENV)/bin/python
 PIP := $(VENV)/bin/pip
@@ -64,6 +65,10 @@ downgrade: ## Roll back one migration
 seed: ## Load reference instruments (ES, NQ, CL, GC and their micros)
 	cd $(API) && ../../$(PY) -m app.scripts.seed_instruments
 
+.PHONY: seed-demo
+seed-demo: ## Load a year of demo trades so the screens have something on them
+	cd $(API) && ../../$(PY) -m app.scripts.seed_demo
+
 # --- Local stack ---------------------------------------------------------------
 
 .PHONY: up
@@ -77,6 +82,21 @@ down: ## Stop the local stack
 .PHONY: logs
 logs: ## Tail API logs
 	docker compose -f infra/docker-compose.yml logs -f api
+
+.PHONY: demo
+demo: ## Bring the whole stack up with a year of demo data, ready to open
+	docker compose -f infra/docker-compose.yml up -d --build
+	@echo "waiting for the API..."
+	@until curl -sf http://localhost:8000/api/v1/trades -H 'X-Debug-User: demo' >/dev/null 2>&1; do sleep 2; done
+	docker compose -f infra/docker-compose.yml exec -T api python -m app.scripts.seed_instruments
+	docker compose -f infra/docker-compose.yml exec -T api python -m app.scripts.seed_demo
+	@echo ""
+	@echo "  Ledgerline is running:  http://localhost:3000"
+	@echo ""
+
+.PHONY: smoke
+smoke: ## Load every route against the running stack and assert it renders
+	cd $(WEB) && npm run smoke
 
 .PHONY: dev
 dev: ## Run the API against a local database with hot reload
