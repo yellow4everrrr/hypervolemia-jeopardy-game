@@ -1,7 +1,7 @@
 "use client";
 
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 
 import { Refusal } from "@/components/evidence";
 import { PageHeader } from "@/components/shell";
@@ -158,6 +158,8 @@ export default function SimulatorPage() {
     onSuccess: (enqueued) => setJobId(enqueued.job_id),
   });
 
+  const client = useQueryClient();
+
   const job = useQuery({
     queryKey: ["job", jobId],
     queryFn: () => request<Job>(`/jobs/${jobId}`),
@@ -172,13 +174,43 @@ export default function SimulatorPage() {
     },
   });
 
+  // A finished sweep replaces the stored one, so the "computed at" line does not keep
+  // citing an older run than the results beside it.
+  useEffect(() => {
+    if (job.data?.state === "succeeded") {
+      void client.invalidateQueries({ queryKey: ["jobs", "latest", "run_simulation"] });
+    }
+  }, [job.data?.state, client]);
+
+  // The most recent sweep this user has ever completed, whoever started it.
+  //
+  // Without this the page only knew about a job *this component instance* enqueued, so a
+  // reload — or arriving from another screen, or coming back tomorrow — showed "No sweep
+  // has been run yet" while finished sweeps sat in the database with their full results.
+  // The natural response to that screen is to run the sweep again, which is the one
+  // behaviour this module exists to discourage: re-running until something clears the
+  // threshold. It cost a minute of compute per accidental re-run and quietly undermined
+  // the point of the feature.
+  const latest = useQuery({
+    queryKey: ["jobs", "latest", "run_simulation"],
+    queryFn: () =>
+      request<{ jobs: Job[] }>("/jobs?kind=run_simulation&state=succeeded&limit=1"),
+    select: (data) => data.jobs[0],
+  });
+
   const state = job.data?.state;
   const running = jobId !== null && !!state && !SETTLED.includes(state as (typeof SETTLED)[number]);
   const pending = enqueue.isPending || running;
 
   // The handler returns the sweep payload whole, so the job's result *is* the report.
-  const report =
-    state === "succeeded" ? (job.data?.result as unknown as SweepReport) : undefined;
+  // A sweep run in this session wins; otherwise the last stored one is shown.
+  const shown = state === "succeeded" ? job.data : latest.data;
+  const report = shown?.result as unknown as SweepReport | undefined;
+
+  // Whether what is on screen came from storage rather than from a run just watched. It
+  // is labelled, because a sweep from three months ago and one from thirty seconds ago
+  // render identically and only one of them describes the current history.
+  const restored = state !== "succeeded" && !!latest.data;
 
   return (
     <>
@@ -225,6 +257,17 @@ export default function SimulatorPage() {
             Queued as a background job — nine scenarios re-priced across your whole
             history takes about a minute. This page updates when it finishes, and the
             work continues if you navigate away.
+          </p>
+        ) : null}
+
+        {/* Where these numbers came from. A restored sweep and one just watched render
+            identically, and only one of them was computed against the current history —
+            a trade imported since then is not in it. */}
+        {restored && shown?.finished_at ? (
+          <p className="text-[11px] text-slate-500">
+            Showing the last completed sweep, computed{" "}
+            {new Date(shown.finished_at).toLocaleString()}. Run it again to include
+            trades imported since.
           </p>
         ) : null}
 
