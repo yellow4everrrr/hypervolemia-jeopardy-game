@@ -129,6 +129,10 @@ test.describe("every route renders against real data", () => {
   test("strategies renders the rule set", async ({ page }) => {
     await checkRoute(page, "/strategies", [/Strateg/i]);
   });
+
+  test("broker renders the link form and the connection list", async ({ page }) => {
+    await checkRoute(page, "/broker", [/Broker/i, /Link a Tradovate account/i]);
+  });
 });
 
 test("the replay chart draws bars rather than an empty pane", async ({ page }) => {

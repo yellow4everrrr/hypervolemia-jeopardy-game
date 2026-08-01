@@ -40,10 +40,32 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         environment=settings.environment,
         version=settings.version,
     )
+    _verify_secret_encryption(settings)
     await _verify_tenant_isolation(settings)
     yield
     await dispose_engine()
     logger.info("app.stopped")
+
+
+def _verify_secret_encryption(settings: Settings) -> None:
+    """Refuse to start in a deployed environment without an encryption key.
+
+    The failure this prevents is not "credentials are unprotected" — it is "credentials
+    are unprotected and everything appears to work". A store that falls back to plaintext
+    passes every test, serves every request, and is discovered only by whoever reads the
+    dump. Startup is the last honest place to stop.
+
+    Building the cipher rather than checking the key is non-empty, because a malformed
+    key fails at the first ``put`` — which is when a user is handing over a broker
+    password — rather than at boot.
+    """
+    if not settings.requires_secret_encryption:
+        return
+
+    from app.infrastructure.secrets.encrypted import build_cipher
+
+    build_cipher(settings.secret_encryption_keys)
+    logger.info("app.secret_encryption_ready", keys=len(settings.secret_encryption_keys))
 
 
 async def _verify_tenant_isolation(settings: Settings) -> None:

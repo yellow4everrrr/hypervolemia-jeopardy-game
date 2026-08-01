@@ -32,6 +32,11 @@ Then open **http://localhost:3000**. No account, no broker, no configuration: th
 runs with `LEDGERLINE_AUTH_DEV_BYPASS` and the frontend sends a matching debug identity,
 which `get_settings` refuses to enable outside local and test environments.
 
+To connect a real account, use **Broker** in the sidebar. Start on Tradovate's `demo`
+environment — it exercises the identical code path against the real API with no money at
+risk. Credentials are verified against the broker before anything is stored, and are
+never typed anywhere but that form.
+
 The demo history is deliberately shaped rather than random — 250 sessions with a planted
 late-session leak sitting at the overtrading detector's threshold, so the pattern scan and
 the compliance engine each find it by their own route. See `app/scripts/seed_demo.py` for
@@ -111,7 +116,13 @@ These are enforced by tests, types or the schema, not by convention:
    which the startup check refuses to boot without in production.
 7. **The sync cursor never advances past a fill that was not ingested.** A fill we
    cannot interpret is deferred with a reason and retried, never skipped.
-8. **Broker credentials never touch the database.** Only a secret-store pointer does.
+8. **Broker credentials are never stored in readable form.** `broker_connections` holds
+   a secret-store reference, never a password. The default deployed store encrypts them
+   with Fernet and keeps the key in the environment, so a stolen dump or leaked backup
+   yields ciphertext — but it *is* the same database, and anyone who can read the process
+   environment can decrypt. Pointing `SecretStore` at a managed vault is a substitution,
+   not a rewrite; see `app/infrastructure/secrets/encrypted.py` for what each threat
+   model buys.
 9. **No statistic is reported without its sample size,** and none is called a finding
    until it survives significance testing adjusted for the size of the scan.
 

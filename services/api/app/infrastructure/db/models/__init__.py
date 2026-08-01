@@ -35,6 +35,7 @@ from app.infrastructure.db.models.instruments import Instrument
 from app.infrastructure.db.models.jobs import Job
 from app.infrastructure.db.models.journal import DailyJournal, Note, Screenshot
 from app.infrastructure.db.models.marketdata import MarketBar, ReplayMetadata
+from app.infrastructure.db.models.secrets import StoredSecret
 from app.infrastructure.db.models.trading import (
     Execution,
     Order,
@@ -70,6 +71,7 @@ __all__ = [
     "RuleEvaluation",
     "Screenshot",
     "Setup",
+    "StoredSecret",
     "Strategy",
     "StrategyRule",
     "SyncRun",

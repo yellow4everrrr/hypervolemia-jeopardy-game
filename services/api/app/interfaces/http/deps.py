@@ -10,14 +10,13 @@ from fastapi import Depends, Header, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import Environment, Settings, get_settings
+from app.core.config import Settings, get_settings
 from app.core.errors import AuthenticationError, NotFoundError
 from app.core.logging import bind_contextvars
 from app.infrastructure.db.models.identity import User
 from app.infrastructure.db.session import get_sessionmaker
 from app.infrastructure.db.tenancy import set_tenant
 from app.infrastructure.secrets.store import (
-    EnvironmentSecretStore,
     InMemorySecretStore,
     SecretStore,
 )
@@ -35,13 +34,28 @@ def get_verifier() -> ClerkTokenVerifier:
 def get_secret_store() -> SecretStore:
     """Where broker credentials live.
 
-    Environment-backed in deployed environments, in-memory locally so that linking a
-    demo account during development does not require provisioning a secret manager.
-    The in-memory store is refused in production by `Settings.is_production` below.
+    Encrypted in Postgres in deployed environments, in-memory locally so that linking a
+    demo account during development needs no key and leaves nothing behind.
+
+    It used to return ``EnvironmentSecretStore`` for staging and production, which is
+    **read-only** — its ``put`` raises. Since ``POST /broker/connections`` writes the
+    credential it just verified, linking a broker returned a 500 in every deployed
+    environment. Nothing caught it because every test ran against the in-memory store.
+    ``EnvironmentSecretStore`` remains for reading a credential injected by a platform's
+    own secret manager, which is a real deployment shape, but it can no longer be the
+    default for a flow that writes.
     """
     settings = get_settings()
-    if settings.is_production or settings.environment is Environment.STAGING:
-        return EnvironmentSecretStore()
+    if settings.requires_secret_encryption:
+        from app.infrastructure.db.session import get_sessionmaker
+        from app.infrastructure.secrets.encrypted import (
+            EncryptedDatabaseSecretStore,
+            build_cipher,
+        )
+
+        return EncryptedDatabaseSecretStore(
+            get_sessionmaker(), build_cipher(settings.secret_encryption_keys)
+        )
     return InMemorySecretStore()
 
 

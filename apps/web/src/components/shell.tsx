@@ -20,6 +20,7 @@ const NAV = [
   { href: "/simulator", label: "Simulator", hint: "What-if rule changes" },
   { href: "/reports", label: "Reports", hint: "Daily through annual" },
   { href: "/jobs", label: "Jobs", hint: "Background work" },
+  { href: "/broker", label: "Broker", hint: "Link an account" },
 ] as const;
 
 export function Shell({ children }: { children: React.ReactNode }) {
