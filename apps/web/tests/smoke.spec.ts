@@ -133,6 +133,13 @@ test.describe("every route renders against real data", () => {
   test("broker renders the link form and the connection list", async ({ page }) => {
     await checkRoute(page, "/broker", [/Broker/i, /Link a Tradovate account/i]);
   });
+
+  test("coach renders, and says so when no model is configured", async ({ page }) => {
+    // Against a deployment with no API key this lands on the refusal, which is the
+    // correct output and not an error — the assertion is that the page renders either
+    // way rather than that a model answered.
+    await checkRoute(page, "/coach", [/Coach/i, /Ask the coach/i]);
+  });
 });
 
 test("the replay chart draws bars rather than an empty pane", async ({ page }) => {

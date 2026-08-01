@@ -18,6 +18,7 @@ const NAV = [
   { href: "/patterns", label: "Patterns", hint: "Behavioural leaks and edges" },
   { href: "/strategies", label: "Strategies", hint: "Rules and compliance" },
   { href: "/simulator", label: "Simulator", hint: "What-if rule changes" },
+  { href: "/coach", label: "Coach", hint: "Interprets, never invents" },
   { href: "/reports", label: "Reports", hint: "Daily through annual" },
   { href: "/jobs", label: "Jobs", hint: "Background work" },
   { href: "/broker", label: "Broker", hint: "Link an account" },
