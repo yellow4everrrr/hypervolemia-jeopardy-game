@@ -156,6 +156,29 @@ def test_job_matches_the_queue_projection() -> None:
     assert_declared_fields_exist("Job", job_projection_keys())
 
 
+def test_enqueued_job_matches_what_post_jobs_returns() -> None:
+    """`POST /jobs` returns an acknowledgement, not a Job.
+
+    Added after making exactly the mistake this file exists to prevent: the simulator was
+    wired to read `.id` off the enqueue response, which has `job_id`. `undefined` then
+    became the URL of the polling request. Nothing raised — it 404ed forever behind a
+    spinner.
+    """
+    assert_declared_fields_exist("EnqueuedJob", enqueue_response_keys())
+
+
+def enqueue_response_keys() -> set[str]:
+    """Keys `POST /jobs` returns, read from `EnqueuedJob.to_payload` in the queue.
+
+    Built by calling the same method the endpoint returns, so a rename there fails here.
+    """
+    from app.jobs.queue import Enqueued
+
+    return set(
+        Enqueued(job_id=uuid4(), kind=JobKind.RUN_SIMULATION, created=True).to_payload()
+    )
+
+
 def test_the_check_would_catch_the_bug_that_motivated_it() -> None:
     """The guard's own regression test.
 

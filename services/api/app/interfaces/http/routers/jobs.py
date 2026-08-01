@@ -37,6 +37,7 @@ ENQUEUEABLE: tuple[JobKind, ...] = (
     JobKind.DETECT_PATTERNS,
     JobKind.TRAIN_MODELS,
     JobKind.GENERATE_REPORTS,
+    JobKind.RUN_SIMULATION,
 )
 
 

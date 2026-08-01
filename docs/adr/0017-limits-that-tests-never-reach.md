@@ -82,13 +82,26 @@ moved the Benjamini–Hochberg threshold for every honest test beside them.
   then read back through a session that has never seen the row. Every previous test
   created and listed in the same session, where the relationship is already populated,
   which is precisely why none of them saw the bug.
-- The sweep is still slow: 65 seconds for nine scenarios over 1,447 trades even with the
-  reduced resampling that `?quick=true` now enables. The cost is the re-pricing, not the
-  bootstrap, so fewer resamples cannot fix it. **It belongs on the job queue**, which
-  milestone 13 already built — `JobKind` has no simulation member yet, so that is an enum
-  value, a migration, a handler and a polling UI. Not done here, and not disguised: a
-  minute-long synchronous POST is past most proxy timeouts and far past the point where a
-  person believes the page is broken.
+- **The sweep is now queued** (`JobKind.RUN_SIMULATION`, migration `0005`). It was a
+  synchronous `POST` costing 65–95 seconds on 1,447 trades — past most proxy timeouts and
+  far past the point where a person concludes the page has hung. The handler returns the
+  sweep payload whole into `jobs.result`, so no new table or endpoint was needed to read
+  it back, and the screen enqueues and polls.
+
+  Measurement settled a question this ADR originally got wrong. A `?quick=true` knob was
+  added first, on the assumption that fewer bootstrap resamples would make the sweep
+  interactive. Measured on the same history: **94 seconds at ten thousand resamples, 92 at
+  two thousand.** The cost is re-pricing every trade under every scenario, which the
+  resample count does not touch. The knob is still worth having for a caller that wants a
+  deliberately coarse answer — a coarser bootstrap raises the p-value floor, so it is
+  conservative rather than permissive — but the comment claiming it fixed latency was
+  wrong and now says so.
+
+  Wiring it produced one more instance of the contract defect this file is about:
+  `POST /jobs` returns `{job_id, kind, created}`, not a `Job`, and the first version of
+  the polling code read `.id`. `undefined` became the URL of every subsequent request,
+  which 404ed behind a spinner without raising. `EnqueuedJob` is now transcribed in
+  `evidence.ts` and checked by `test_wire_contracts.py` like every other wire shape.
 
 ## The pattern across all three
 

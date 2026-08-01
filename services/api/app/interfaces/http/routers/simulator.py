@@ -79,16 +79,17 @@ class QuantifyRequest(BaseModel):
     account_id: UUID | None = None
 
 
-#: Resamples for an interactive sweep, mirroring the pattern scan's ``QUICK``. A coarser
-#: bootstrap makes the p-value *floor* higher — 1/2,000 rather than 1/10,000 — so a quick
-#: sweep is more conservative than a thorough one, never less: a scenario that clears the
-#: bar here would clear it with more resamples too.
+#: Resamples for a coarser sweep, mirroring the pattern scan's ``QUICK``. Fewer resamples
+#: raise the p-value *floor* — 1/2,000 rather than 1/10,000 — so a quick sweep is more
+#: conservative than a thorough one, never less: a scenario that clears the bar here would
+#: clear it with more resamples too.
 #:
-#: The knob exists because the full sweep is genuinely slow. Nine scenarios re-priced
-#: across 1,447 trades with ten thousand resamples each takes **94 seconds**, which is
-#: past most proxy and load-balancer timeouts and far past the point where a person
-#: believes the page is broken. Milestone 13's queue is the real answer — the sweep should
-#: be a job — and until then this keeps the interactive path usable rather than nominal.
+#: **It does not make the sweep fast, and an earlier version of this comment claimed it
+#: would.** Measured on the same 1,447-trade history: 94 seconds at ten thousand
+#: resamples, 92 at two thousand. The cost is re-pricing every trade under every scenario,
+#: which the bootstrap count does not touch. The knob is worth keeping for a caller that
+#: wants a deliberately coarse answer; it is not a latency fix, and the queue
+#: (``JobKind.RUN_SIMULATION``) is what actually solved that.
 QUICK_PERMUTATIONS = 2_000
 
 

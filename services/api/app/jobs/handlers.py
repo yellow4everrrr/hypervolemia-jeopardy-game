@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.use_cases.detect_patterns import DetectPatterns
 from app.application.use_cases.generate_report import GenerateReport
+from app.application.use_cases.run_simulation import RunSimulation
 from app.application.use_cases.train_models import TrainModels
 from app.core.logging import get_logger
 from app.domain.common.enums import JobKind, ReportType
@@ -27,6 +28,7 @@ from app.infrastructure.db.models.jobs import Job
 from app.infrastructure.db.repositories.ml import SqlAlchemyModelRepository
 from app.infrastructure.db.repositories.patterns import SqlAlchemyPatternRepository
 from app.infrastructure.db.repositories.reports import SqlAlchemyReportRepository
+from app.infrastructure.db.repositories.simulation import SqlAlchemySimulationRepository
 from app.infrastructure.db.uow import SqlAlchemyUnitOfWork
 
 logger = get_logger(__name__)
@@ -107,6 +109,34 @@ async def generate_reports(session: AsyncSession, job: Job) -> dict[str, Any]:
     }
 
 
+async def run_simulation(session: AsyncSession, job: Job) -> dict[str, Any]:
+    """Sweep counterfactual rules against the trader's history.
+
+    Queued rather than served inline because it takes roughly a minute: nine scenarios
+    re-priced across a year of trades, each bootstrapped. It was a synchronous ``POST``
+    until measurement showed 65 seconds on 1,447 trades, which is past most proxy
+    timeouts and far past the point where a person believes the page has hung.
+
+    Idempotent for free. The sweep writes nothing — it loads trades, re-prices them and
+    returns — and every random draw is seeded, so a re-run produces a byte-identical
+    result rather than converging on one.
+
+    **The whole payload is returned**, not a summary, because it lands in ``jobs.result``
+    and that is where the UI reads it from. Returning only the headline would mean either
+    a second store for the detail or a second computation to recover it, and the second
+    computation is the minute this job exists to avoid.
+    """
+    outcome = await RunSimulation(
+        repository=SqlAlchemySimulationRepository(session),
+        uow=SqlAlchemyUnitOfWork(session),
+    ).execute(
+        user_id=job.user_id,
+        account_id=_account_id(job),
+        permutations=job.payload.get("permutations"),
+    )
+    return outcome.to_payload()
+
+
 #: The dispatch table. A job kind with no handler is a configuration error rather than a
 #: runtime surprise: :func:`handler_for` raises, the worker records it, and the job goes
 #: to ``dead`` after its attempts rather than silently succeeding.
@@ -114,6 +144,7 @@ HANDLERS: dict[JobKind, Handler] = {
     JobKind.DETECT_PATTERNS: detect_patterns,
     JobKind.TRAIN_MODELS: train_models,
     JobKind.GENERATE_REPORTS: generate_reports,
+    JobKind.RUN_SIMULATION: run_simulation,
 }
 
 

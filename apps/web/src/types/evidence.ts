@@ -267,6 +267,22 @@ export interface Job {
   last_error: string | null;
 }
 
+/**
+ * What `POST /jobs` returns — deliberately **not** a `Job`.
+ *
+ * The enqueue endpoint answers "is this work scheduled?", not "what is its state?", so it
+ * returns the id, the kind, and whether this call created the job or matched an existing
+ * one by idempotency key. Assuming it returns a `Job` and reading `.id` yields `undefined`,
+ * which then polls `/jobs/undefined` — a mistake made and caught while wiring the
+ * simulator, and the reason this shape is transcribed here rather than inferred.
+ */
+export interface EnqueuedJob {
+  job_id: string;
+  kind: string;
+  /** False when an identical job was already queued: "already scheduled" is a success. */
+  created: boolean;
+}
+
 /** The API's error envelope. Every failure has this shape, including 429s. */
 export interface ApiErrorBody {
   error: {

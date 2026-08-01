@@ -277,6 +277,11 @@ class JobKind(StrEnum):
     DETECT_PATTERNS = "detect_patterns"
     TRAIN_MODELS = "train_models"
     GENERATE_REPORTS = "generate_reports"
+    #: The what-if sweep. Added after measurement rather than by anticipation: nine
+    #: scenarios re-priced across 1,447 trades takes 65 seconds, which is past most proxy
+    #: and load-balancer timeouts and far past the point where a person believes the page
+    #: is broken. Reducing the resampling does not help — the cost is the re-pricing.
+    RUN_SIMULATION = "run_simulation"
     MEASURE_EXCURSIONS = "measure_excursions"
 
 

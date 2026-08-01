@@ -1,11 +1,13 @@
 "use client";
 
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 
 import { Refusal } from "@/components/evidence";
 import { PageHeader } from "@/components/shell";
 import { request } from "@/lib/api";
 import { formatMoney, formatNumber, formatPercent } from "@/lib/format";
+import type { EnqueuedJob, Job } from "@/types/evidence";
 import type { ScenarioResult, SweepReport } from "@/types/simulation";
 
 /**
@@ -30,6 +32,13 @@ import type { ScenarioResult, SweepReport } from "@/types/simulation";
  * The run is an explicit button. A sweep costs seconds of bootstrapping per scenario, and
  * a screen that re-runs it on mount invites the one behaviour this whole module exists to
  * prevent — running it repeatedly until something clears the threshold.
+ *
+ * It is also **queued rather than awaited**. Nine scenarios across a year of trades takes
+ * about a minute, which is past most proxy timeouts and far past the point where a person
+ * concludes the page has hung; the first version of this screen held a `POST` open for all
+ * of it. The button now enqueues a job and this component polls it, so the wait is visible
+ * and survives a reload. The result payload lands in `jobs.result`, which is why no new
+ * endpoint was needed to read it back.
  */
 
 function verdictTone(result: ScenarioResult): string {
@@ -133,16 +142,43 @@ function ScenarioRow({ result }: { result: ScenarioResult }) {
   );
 }
 
+/** States in which a job will never produce a result, so polling should stop. */
+const SETTLED = ["succeeded", "failed", "dead", "cancelled"] as const;
+
 export default function SimulatorPage() {
-  const sweep = useMutation({
+  const [jobId, setJobId] = useState<string | null>(null);
+
+  const enqueue = useMutation({
     mutationFn: () =>
-      request<SweepReport>("/simulator/sweep?quick=true", {
+      request<EnqueuedJob>("/jobs", {
         method: "POST",
-        body: {},
+        body: { kind: "run_simulation" },
       }),
+    // `job_id`, not `id`: the enqueue response is not a Job. See `EnqueuedJob`.
+    onSuccess: (enqueued) => setJobId(enqueued.job_id),
   });
 
-  const report = sweep.data;
+  const job = useQuery({
+    queryKey: ["job", jobId],
+    queryFn: () => request<Job>(`/jobs/${jobId}`),
+    enabled: jobId !== null,
+    // Polling stops the moment the job settles rather than running forever behind an
+    // open tab. `false` is how TanStack Query is told to stand down.
+    refetchInterval: (query) => {
+      const state = query.state.data?.state;
+      return state && SETTLED.includes(state as (typeof SETTLED)[number])
+        ? false
+        : 2_000;
+    },
+  });
+
+  const state = job.data?.state;
+  const running = jobId !== null && !!state && !SETTLED.includes(state as (typeof SETTLED)[number]);
+  const pending = enqueue.isPending || running;
+
+  // The handler returns the sweep payload whole, so the job's result *is* the report.
+  const report =
+    state === "succeeded" ? (job.data?.result as unknown as SweepReport) : undefined;
 
   return (
     <>
@@ -155,22 +191,40 @@ export default function SimulatorPage() {
         <div className="flex items-center gap-4">
           <button
             type="button"
-            onClick={() => sweep.mutate()}
-            disabled={sweep.isPending}
+            onClick={() => enqueue.mutate()}
+            disabled={pending}
             className="rounded border border-slate-700 bg-slate-800 px-4 py-2 text-sm text-slate-200 hover:bg-slate-700 disabled:opacity-50"
           >
-            {sweep.isPending ? "Simulating…" : "Run the standard sweep"}
+            {pending ? "Simulating…" : "Run the standard sweep"}
           </button>
           <p className="max-w-2xl text-[11px] leading-relaxed text-slate-500">
             Nine scenarios, bootstrapped per scenario and corrected together. Every
             scenario added raises the bar for all the others, which is why the standard
-            sweep is short.
+            sweep is short. It runs as a background job — about a minute — so closing
+            this page does not cancel it.
           </p>
         </div>
 
-        {sweep.isError ? (
+        {enqueue.isError ? (
           <p className="rounded border border-rose-500/30 bg-rose-500/5 p-4 text-sm text-rose-200">
-            The sweep could not be run.
+            The sweep could not be queued.
+          </p>
+        ) : null}
+
+        {/* A failed job's reason is the most useful thing it produced, so it is rendered
+            rather than collapsed into "something went wrong". */}
+        {state === "failed" || state === "dead" ? (
+          <p className="rounded border border-rose-500/30 bg-rose-500/5 p-4 text-sm text-rose-200">
+            The sweep {state === "dead" ? "failed repeatedly and was given up on" : "failed"}
+            {job.data?.last_error ? `: ${job.data.last_error}` : "."}
+          </p>
+        ) : null}
+
+        {running ? (
+          <p className="text-sm text-slate-500">
+            Queued as a background job — nine scenarios re-priced across your whole
+            history takes about a minute. This page updates when it finishes, and the
+            work continues if you navigate away.
           </p>
         ) : null}
 
@@ -229,7 +283,7 @@ export default function SimulatorPage() {
           </>
         ) : null}
 
-        {!report && !sweep.isPending ? (
+        {!report && !pending ? (
           <p className="text-sm text-slate-500">
             No sweep has been run yet. It re-prices every trade under each rule using
             the excursions recorded for that trade, so it needs a few seconds.
