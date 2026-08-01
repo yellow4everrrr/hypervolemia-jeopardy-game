@@ -1,0 +1,144 @@
+name: API CI
+
+# `push` is limited to the default branch on purpose. With `branches: ["**"]` every push
+# to a branch that had a pull request open ran the whole suite twice — once for the push
+# and once for the pull request — because the two events produce different values for
+# `github.ref` (`refs/heads/<branch>` against `refs/pull/<n>/merge`) and so landed in
+# different concurrency groups, where neither cancelled the other. The test job takes
+# about twenty minutes, so that was forty minutes of runner time per push, doubled again
+# by Web CI doing the same thing.
+#
+# The trade-off is that a branch with no pull request open now gets no CI. That is the
+# ordinary arrangement and the right side to err on here: work not yet proposed for merge
+# is work nobody is waiting on, and opening the pull request starts the checks.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "services/api/**"
+      - ".github/workflows/api-ci.yml"
+  pull_request:
+    paths:
+      - "services/api/**"
+      - ".github/workflows/api-ci.yml"
+
+# Keyed so a pull-request run and a run of the same branch collapse into one group.
+# `github.ref` does not: it is the merge ref for a pull request and the branch ref for a
+# push, which is what allowed the duplication above.
+concurrency:
+  group: api-ci-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  quality:
+    name: Lint, type-check, test
+    runs-on: ubuntu-latest
+    # The suite takes about twenty minutes with coverage on. Capped well above that but
+    # far below GitHub's 360-minute default, so a hung test costs half an hour rather
+    # than six hours of runner time.
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: services/api
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: services/api/pyproject.toml
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Type-check
+        run: mypy app
+
+      - name: Test
+        # `-m "not db"` explicitly, rather than relying on the database-backed tests
+        # skipping themselves when the URL is unset. Both work, but the marker states the
+        # split this job intends: everything that does not need PostgreSQL runs here, and
+        # `pytest -m db` in the migrations job runs the rest. A skip is silent about
+        # whether a test was meant to run somewhere else.
+        run: pytest -m "not db" --cov --cov-report=term-missing
+
+  migrations:
+    name: Migrations apply and roll back
+    runs-on: ubuntu-latest
+    # Normally about two minutes; the margin is for a slow TimescaleDB container start.
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: services/api
+
+    # A migration that has never been executed is a migration that does not work. This
+    # job applies the full history to an empty TimescaleDB, then rolls it back, so both
+    # directions are exercised on every change.
+    services:
+      postgres:
+        image: timescale/timescaledb:2.17.2-pg16
+        env:
+          POSTGRES_USER: ledgerline
+          POSTGRES_PASSWORD: ledgerline
+          POSTGRES_DB: ledgerline
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ledgerline"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      LEDGERLINE_DATABASE_URL: postgresql+asyncpg://ledgerline:ledgerline@localhost:5432/ledgerline
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: services/api/pyproject.toml
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Apply migrations
+        run: alembic upgrade head
+
+      - name: Verify the models match the migrated schema
+        # An empty autogenerate diff proves the migration and the models agree. Without
+        # this, a model change without a migration passes every other check and fails
+        # in production.
+        run: |
+          alembic revision --autogenerate -m "ci drift check" --rev-id ci_drift
+          if grep -qE "op\.(create|drop|alter|add)" migrations/versions/ci_drift_*.py; then
+            echo "::error::Models have drifted from the migrations. Run 'make migration'."
+            cat migrations/versions/ci_drift_*.py
+            exit 1
+          fi
+          rm migrations/versions/ci_drift_*.py
+
+      - name: Seed reference instruments
+        run: python -m app.scripts.seed_instruments
+
+      - name: Run database-backed tests
+        env:
+          LEDGERLINE_TEST_DATABASE_URL: postgresql+asyncpg://ledgerline:ledgerline@localhost:5432/ledgerline
+        run: pytest -m db
+
+      - name: Roll back
+        run: alembic downgrade base

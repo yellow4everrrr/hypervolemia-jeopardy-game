@@ -1,0 +1,679 @@
+# Ledgerline — Product & Engineering Roadmap
+
+Ledgerline is an institutional-grade AI trading journal: it connects directly to a
+broker (Tradovate first), reconstructs every trade from raw fills, computes
+quantitative performance statistics in Python, and uses an LLM **only to interpret
+those computed numbers** — never to invent them.
+
+This document is the contract between milestones. Each milestone is independently
+reviewable, ships tests and docs, and leaves `main` deployable.
+
+---
+
+## Milestone map
+
+| # | Milestone | Why it exists | Status |
+|---|-----------|---------------|--------|
+| 1 | **Foundation, domain model & schema** | Nothing downstream is trustworthy if trade reconstruction or the schema is wrong. Establishes clean architecture, the FIFO execution→trade engine, the normalized Postgres/TimescaleDB schema, and the test/CI/dev harness. | ✅ Complete |
+| 2 | **Tradovate integration & sync pipeline** | Zero manual journaling is the core promise. Token lifecycle, REST backfill, WebSocket live fills, idempotent ingestion, safe sync cursors, reconciliation against broker P/L. | ✅ Complete |
+| 3 | **Analytics engine** | Every AI claim must trace to a deterministic Python number. Expectancy, profit factor, Sharpe/Sortino, SQN, Kelly, risk of ruin, drawdown, edge ratio, Monte Carlo, bootstrap confidence intervals, the full segmentation cube, and the significance control that stops it manufacturing edges. | ✅ Complete |
+| 4 | **Market data & replay engine** | Replay and MAE/MFE need bar data. TimescaleDB hypertables, bar ingestion, replay window computation, marker generation, S3 snapshot pipeline. | ✅ Complete |
+| 5 | **Frontend foundation** | Next.js + design system, dashboard, trade blotter, patterns, reports, jobs. Evidence components that will not render a number without what qualifies it. | ✅ Complete |
+| 6 | **Trade replay UI** | Lightweight Charts playback, stepped bar by bar with no interpolation. Entry/exit/stop markers drawn only for recorded prices. | ✅ Complete |
+| 7 | **Strategy builder & compliance engine** | Turns subjective "did I follow my plan?" into a scored, rule-by-rule verdict on every imported trade. | ✅ Complete |
+| 8 | **Pattern & setup detection** | Unsupervised clustering + hypothesis testing to surface hidden edges and leaks; automatic setup classification. | ✅ Complete |
+| 9 | **AI coach layer** | Claude as head quant researcher, constrained by a strict evidence contract: it may only cite metrics returned by the analytics engine. | ✅ Complete |
+| 10 | **What-if simulator** | Counterfactual re-simulation (different stop/target/RR/ATR trail/filters) with recomputed expectancy and significance. | ✅ Complete |
+| 11 | **ML layer** | Success probability and expected R with walk-forward validation, calibration and a refusal-to-serve gate. Optimal stop/target deferred — see below. | ✅ Complete |
+| 12 | **Reports & scheduling** | Daily → annual reports with deduplicated leak quantification and tested period-over-period comparison. | ✅ Complete |
+| 13 | **Hardening & scale** | Postgres-backed job queue, row-level security, two-tier rate limiting. Partitioning and continuous aggregates deferred — see below. | ✅ Complete |
+
+### A note on ordering
+
+The backend milestones (7–13) were built before the frontend ones (5–6), a deliberate
+departure from the numbering above. All thirteen have now shipped.
+
+The reason is that 7–13 compound on each other and on the analytics engine, while 5 and
+6 consume an API. Building the UI against a half-finished API means building it twice:
+the compliance panel, the pattern list, the coach transcript and the what-if controls
+each change the shape of the trade detail view, and a frontend written before those
+exist would be refactored on every backend milestone. The frontend milestones are
+unchanged in scope — only in sequence — and the numbering is kept so existing
+references stay valid.
+
+---
+
+## Milestone 1 — delivered scope
+
+**Why this first.** Trade reconstruction is the single point of failure for the whole
+product: if fills are merged into trades incorrectly, every statistic, every AI
+insight, and every replay is wrong in a way that is very hard to detect later. So
+milestone 1 builds the reconstruction engine as a *pure, exhaustively tested domain
+function* with no database or network involved, then wraps it in the persistence and
+service scaffolding.
+
+Delivered:
+
+- Monorepo layout with clean-architecture backend (`domain` → `application` →
+  `infrastructure` → `interfaces`, dependencies pointing inward only).
+- Pure domain layer: instruments, executions, FIFO position/trade reconstruction
+  (including position flips and pro-rata commission allocation), R-multiple maths,
+  and exchange-aware session resolution.
+- Full normalized SQLAlchemy 2.0 schema (32 tables, 22 enum types) with an Alembic
+  migration that creates TimescaleDB hypertables when the extension is available and
+  falls back to ordinary tables when it is not.
+- Repository/unit-of-work ports with SQLAlchemy adapters, and the
+  `IngestExecutions` use case (idempotent fill ingestion → trade rebuild).
+- FastAPI app: request-id and timing middleware, structured JSON logging, typed
+  error envelope, Clerk JWT verification, health/readiness probes, versioned v1 API.
+- Dev harness: Docker Compose (TimescaleDB + Redis), Makefile, ruff + mypy (strict),
+  111 passing tests, and a CI job that applies the migration history to a real
+  TimescaleDB, checks the models have not drifted from it, and rolls back.
+
+**Explicitly not in milestone 1:** any broker network call, any statistic beyond what
+a single trade defines, any UI. Those are milestones 2, 3 and 5 — sequenced that way
+so each can be reviewed against a stable foundation.
+
+---
+
+## Milestone 2 — delivered scope
+
+**Why this second.** Milestone 1 built a reconstruction engine with nothing to feed it.
+Until real fills arrive, every downstream milestone would be built and validated against
+synthetic data — and synthetic data never contains the cases that break things: a fill
+whose order has not settled, a contract nobody seeded, a stream that drops mid-session.
+
+Delivered:
+
+- Tradovate REST client: token lifecycle including the `p-ticket` time-penalty protocol,
+  conservative token-bucket rate limiting, batched entity joins, and Decimal-safe JSON
+  parsing so a price never passes through a float.
+- Mapping layer that refuses to guess. A fill without its order, its contract
+  specification, or (within a grace period) its fee record is deferred with a reason,
+  never approximated.
+- `SyncBrokerAccount`: cursor-safe orchestration that never advances past a fill it did
+  not ingest — see [ADR 0003](./adr/0003-broker-sync.md).
+- Real-time WebSocket connection: SockJS-derived frame codec, unconditional heartbeats,
+  request/response correlation, reconnect with jittered backoff, and a mandatory REST
+  catch-up on every reconnect.
+- Secret-store abstraction. Broker credentials are never written to the database.
+- `broker_instrument_map` and `broker_connections.external_user_id` (migration 0002).
+- Reconciliation of our reconstructed P&L against the broker's own realized figure.
+- HTTP endpoints to link a broker login, list connections, sync on demand, and read the
+  sync audit trail.
+- 126 new tests, including 6 database-backed integration tests that run the real
+  pipeline end to end against a mocked Tradovate API.
+
+**Explicitly not in milestone 2:** scheduled background syncing (needs the worker chosen
+in milestone 13), market data ingestion (milestone 4), and any statistic beyond what a
+single trade defines (milestone 3).
+
+**Not yet verified against a live Tradovate account** — the integration is built from the
+published specification and tested against a mocked API. See
+[the integration notes](./tradovate-integration.md) for what that leaves open.
+
+---
+
+## Milestone 3 — delivered scope
+
+**Why this third.** Milestones 1 and 2 produce trustworthy trades. This is where they
+become answers. It also has to come before the AI layer: ADR 0002 says the model may only
+cite computed statistics, and that requires the computed set to exist first as a
+concrete, enumerable object.
+
+Delivered:
+
+- Pure analytics package in exact decimal arithmetic — no floats anywhere, including
+  square roots, using Python's `decimal` module.
+- Core metrics: expectancy (with interval), expectancy in R, win rate, profit factor,
+  payoff ratio, SQN, edge ratio, cost ratio, hold time split by outcome, and full
+  distribution shape including skew and kurtosis.
+- Equity curve, drawdown periods with recovery, streak analysis, daily series.
+- Sharpe and Sortino computed on the **daily** series with an explicit basis flag; MAR;
+  Kelly with half-Kelly and warnings.
+- Bootstrap confidence intervals, Monte Carlo simulation, simulation-based risk of ruin,
+  probability of profit — all seeded and reproducible, resampled in scaled integers.
+- Permutation testing with Benjamini–Hochberg FDR control, and a segmentation cube over
+  ten dimensions where nothing is a finding until it survives the scan
+  ([ADR 0004](./adr/0004-analytics-honesty.md)).
+- `AnalyticsReport.to_payload()` / `metric_keys()` — the AI layer's evidence base and
+  its citable allow-list.
+- Persistence to `performance_metrics`, `equity_curve_points` and `risk_metrics`, plus
+  four HTTP endpoints.
+- 169 new tests, expected values computed by hand, including two that assert the engine
+  finds *nothing* in pure noise.
+
+**Explicitly not in milestone 3:** MAE/MFE and edge ratio return undefined until
+milestone 4 supplies bar data; scheduled recomputation waits for the worker in
+milestone 13.
+
+---
+
+## Milestone 4 — delivered scope
+
+**Why this fourth.** Two of milestone 3's metrics — MAE/MFE and edge ratio — were
+returning undefined because nothing supplied prices *between* entry and exit. Replay
+needs the same data. Building both on one bar pipeline avoids two ingestion paths that
+would inevitably disagree about what a candle is.
+
+Delivered:
+
+- `BarSeries` with exact-decimal OHLCV bars, `covering()` window selection that includes
+  the bar a trade opened inside, and on-the-fly `resample` to coarser timeframes.
+- Excursion computation from highs and lows rather than closes — a stop is hit by the
+  low, not by the close — feeding `mae_r`, `mfe_r` and `edge_ratio` back onto trades.
+- `sequence_ambiguous()`: when a single bar contains both the excursion extremes, the
+  order of events inside it is unknowable, and the result is flagged rather than assumed.
+- Replay window computation with automatic timeframe choice, entry/exit/scale markers,
+  and a risk box that is `None` when no stop was recorded.
+- TimescaleDB `market_bars` hypertable, bar repository, and an S3-compatible object
+  store with content-addressed screenshot keys.
+
+**Explicitly not in milestone 4:** the replay *UI* (milestone 6) and automatic screenshot
+capture, which needs a headless renderer scheduled by the worker in milestone 13.
+
+---
+
+## Milestone 7 — delivered scope
+
+**Why this now.** Every metric so far answers "how did I do?". None answers "did I do
+what I said I would?" — and for most traders the gap between those two questions is
+where the money goes. It also has to precede the AI layer: a coach that can point at a
+specific broken rule and what it cost is giving evidence, and one that cannot is giving
+opinion.
+
+Delivered:
+
+- A declarative predicate AST for rules ([ADR 0005](./adr/0005-compliance-scoring.md)).
+  Rules are stored as JSON trees and interpreted; nothing user-supplied is ever executed.
+- **Three-valued evaluation** — pass, fail, or *unevaluable*. A rule about stop placement
+  cannot be checked on a trade with no recorded stop, and scoring that as a violation
+  would manufacture indiscipline out of missing data.
+- Severity-weighted scoring where unevaluable rules are excluded from the denominator
+  and reported as coverage, plus a ceiling that stops one critical breach being averaged
+  away by nine passed advisories.
+- A 30-field rule vocabulary published over HTTP, so the rule builder renders the
+  engine's own contract and a typo is rejected at save time rather than reading as
+  unevaluable forever.
+- Session-aware context: sequence-sensitive rules ("at most six trades a session",
+  "wait ten minutes after two losses") are evaluated against the state of the day as it
+  was *immediately before* each trade.
+- Rule impact measurement — what breaking a rule has historically been associated with,
+  labelled as association rather than causation in the payload itself.
+- Versioned strategies: revising rules creates a new version, so past compliance scores
+  remain reproducible against the rules that were actually in force.
+- Eight starter rules, every one checkable from data the journal imports automatically.
+- 61 new tests, including database-backed proof that recomputation converges and that an
+  unevaluable rule is never stored as a failure.
+
+**Explicitly not in milestone 7:** automatic setup classification (milestone 8) and any
+natural-language commentary on a compliance report (milestone 9).
+
+---
+
+## Milestone 8 — delivered scope
+
+**Why this now.** The analytics engine answers questions that are put to it. This
+milestone asks the questions — it looks for leaks the trader has not thought to check
+for. It must precede the AI layer for the same reason milestone 3 did: a coach that can
+point at a specific quantified leak is giving evidence, and one that cannot is giving
+opinion.
+
+Delivered:
+
+- Seven **behavioural detectors** covering sequence-dependent leaks the segmentation cube
+  structurally cannot see: revenge trading, overtrading, trading while down, size
+  escalation, losing streaks, holding asymmetry, and opening-trade performance.
+- Deterministic **k-means** over a documented eight-feature trade space, in exact decimal
+  arithmetic, with k-means++ seeding and k chosen by silhouette.
+- A **null-reference structure test** for clustering: k-means partitions anything, so the
+  winning clustering must beat column-shuffled references before it is reported at all
+  ([ADR 0006](./adr/0006-pattern-detection.md)).
+- **One FDR family across the entire scan** — behavioural and cluster tests corrected
+  together, so adding a detector makes existing findings harder to establish.
+- Cluster descriptions in the trader's own vocabulary, and cluster-to-setup proposals
+  carrying per-trade confidence. Nothing is auto-applied.
+- Persistence of **every test performed**, not only the survivors, so recurrence is
+  falsifiable.
+- 40 new tests, led by a null battery: five seeds of pure noise through the full scan,
+  asserting nothing is found.
+
+**Two defects this milestone found in itself,** both invisible in the output and both
+producing confident, plausible findings — recorded here because they are the reason the
+null battery exists:
+
+1. A detector whose split was a function of the value it compared returned the minimum
+   possible p-value on 100% of noise samples, and — through the step-up FDR procedure —
+   dragged its honest neighbours over the significance line with it.
+2. A fixed silhouette threshold accepted the six-cluster partition k-means imposes on
+   uniformly random data.
+
+**Explicitly not in milestone 8:** natural-language interpretation of a pattern
+(milestone 9), and scheduled rescanning (milestone 13).
+
+---
+
+## Milestone 9 — delivered scope
+
+**Why this now.** Every prior milestone produces numbers. This is where they become
+advice — and where the product's single largest credibility risk lives. A fluent,
+confident sentence containing a number nobody computed is indistinguishable, to a
+reader, from a real one, and a trader who acts on it and loses money has been harmed by
+the product.
+
+Delivered:
+
+- **The coach never writes a number.** It writes `{{metric.key}}` placeholders and
+  Python substitutes the computed value ([ADR 0007](./adr/0007-coach-placeholders.md)).
+  The figure a trader reads is the computed figure *by construction*, not because a
+  checker caught a bad one afterwards.
+- An `EvidenceBundle` carrying each statistic with its sample size, confidence interval,
+  reliability, and — when undefined — the reason. Gaps are recorded explicitly, so the
+  model reports an absence rather than guessing at it.
+- A validator that rejects unknown keys, bare numerals that match no computed value,
+  invented precision, recommendations built on undefined statistics, and uncited claims.
+  Rejection is all-or-nothing; rejected analyses are stored so the rejection rate stays
+  visible.
+- Three claim tiers — `finding` / `observation` / `hypothesis` — with the prompt
+  prescribing which language each permits, so an untested observation cannot be phrased
+  as established.
+- `GET /coach/evidence` publishes the bundle with no model call: the claim that the coach
+  only interprets computed statistics is checkable by the trader, not just by us.
+- Recommendation tracking (`accepted` / `dismissed` / `resolved`), because the only
+  question that matters about coaching is whether acting on it changed the numbers.
+- 36 new tests, written adversarially — every one plays a model that has invented
+  something. `app/ai/` is barred from importing the Anthropic SDK by an architecture
+  test, so all of them run with no API key.
+
+**Explicitly not in milestone 9:** `ai_recommendations.expected_improvement` stays empty
+until the what-if simulator fills it. The model never writes an expected-improvement
+figure — that was ADR 0002's fourth mechanism and it remains intact.
+
+---
+
+## Milestone 10 — delivered scope
+
+**Why this now.** It closes ADR 0002's fourth mechanism. The coach can say a rule is
+costing the trader money; until this milestone nothing could compute what changing it
+would be worth, and `ai_recommendations.expected_improvement` sat empty by design rather
+than by omission.
+
+Delivered:
+
+- Counterfactual re-pricing over stop, target, session-cap, losing-streak and
+  hour filters, walked in session order because the filters are sequence-dependent.
+- A skipped trade advances neither the session counter nor the losing streak — the
+  counterfactual trader never took it, and advancing them would simulate someone who
+  took the trade and ignored the result.
+- Trades the scenario cannot apply to are marked **inapplicable and excluded**, with
+  `coverage` reporting the fraction actually simulated. Counting them as unchanged
+  would dilute every effect toward zero and make each counterfactual look safe.
+- The whole sweep FDR-corrected as one family; `best` returns the largest *established*
+  improvement, never the largest improvement.
+- `POST /simulator/quantify` fills `expected_improvement` from a real re-simulation,
+  and writes an explicit non-result with its reason when it cannot.
+- 32 new tests.
+
+**Choosing the null took three attempts**, and the first two each produced confident,
+wrong findings — recorded here because the reasoning generalises:
+
+1. A **two-sample permutation test** treats baseline and simulated as independent draws.
+   They are the same trades measured twice, so pooling them inflates the reference
+   variance with duplicates the design never contained.
+2. A **sign-flip paired test** assumes each difference's sign is arbitrary under the
+   null. A 2R target deterministically produces its deltas, so that null is trivially
+   false the moment the rule touches one trade — the test then returns "significant" for
+   every scenario, which is no information.
+3. A **bootstrap of the per-trade deltas** asks the question actually being posed: would
+   this improvement survive a different sample of trades? It is what caught a scenario
+   reporting a $1 difference over 240 trades as significant.
+
+Two synthetic-data generators also had to be discarded before the null battery was
+honest — one allowed a losing trade to record an impossible favourable excursion, the
+other made adverse excursion a function of the outcome so that tightening the stop was
+guaranteed to help. The battery now uses a driftless random walk, where the optional
+stopping theorem says no exit rule can have an edge.
+
+The reasoning is recorded in
+[ADR 0008](./adr/0008-counterfactual-simulation.md), and the working guide is
+[docs/what-if.md](./what-if.md).
+
+**Explicitly not in milestone 10:** ATR-based trailing stops, which need bar-by-bar
+paths rather than the excursion summary; and portfolio-level simulation across accounts.
+
+---
+
+## Milestone 11 — delivered scope
+
+**Why this now.** Everything before it describes the past. This one makes a claim about a
+trade that has not happened, and a trader will *size on that number* — which makes it the
+surface where being wrong is most expensive, and the one where the default answer has to
+be no.
+
+Delivered:
+
+- Two heads — win probability (ridge logistic) and expected R (ridge linear) — each
+  trained, validated and gated independently, so a trader who records no stops still gets
+  a win-rate model.
+- **A structural leakage barrier.** `EntrySnapshot` carries only what was knowable at
+  entry and has no outcome fields at all, so a feature extractor written against it
+  cannot reach `net_pnl`, `r_multiple`, `mfe_r`, `mae_r` or `duration_seconds` — not by
+  accident, not by refactor. Sequence context (trades so far today, session P&L, losing
+  streak) is filled as of *before* each trade, which is the second and subtler leak.
+- Walk-forward validation that splits on **session boundaries**, never inside a day, with
+  the ridge penalty chosen by a nested forward split of the training window only.
+- Calibration against a parametric bootstrap null, a Brier skill score against the
+  trader's own base rate, and deliberately **no accuracy, F1 or ROC-AUC** — all of them
+  are insensitive to calibration, which is the entire question.
+- Refusals as first-class stored results with plain-language reasons, plus a `CHECK`
+  constraint making a row that is both deployable and refused impossible.
+- Pure-Decimal Newton fitting and a hand-written linear solver: no new dependency, and a
+  stored model reproduces its predictions regardless of platform `libm`.
+- 100 new tests, migration `0003_prediction_models`.
+
+**The skill gate was wrong on the first attempt**, and it is recorded because the failure
+generalises. The original rule was `skill > 0`: serve the model if it beat the baseline
+out of sample. Probing it on ten histories whose outcomes were *independent of every
+feature* produced skill scores scattered around zero — and one landed at **+0.014**, which
+under that rule was deployable. A trader would have been shown per-trade win
+probabilities computed from pure noise, with nothing marking them as such.
+
+That is the same defect ADR 0006 and ADR 0008 each found in their own domain: a point
+estimate compared against a threshold, with nothing said about how far it would move on a
+different sample. Skill now carries a **session-block bootstrap interval** and deployment
+requires it to exclude zero — sessions rather than trades, because resampling correlated
+trades individually would have produced an interval half the width it should be and
+hidden this exact false positive. After the change: **0 false deployments in 40 runs**,
+with the positive control still deploying.
+
+The reasoning is recorded in [ADR 0009](./adr/0009-predictive-models.md), and the working
+guide is [docs/ml.md](./ml.md).
+
+**Explicitly not in milestone 11:** categorical features (one-hot overfits at this sample
+size and target encoding leaks unless recomputed per fold — segmentation already compares
+setups with a proper test).
+
+**Optimal exits were deferred here and delivered afterwards** — see the follow-on section
+below. Building them turned up a bias in the milestone 10 simulator.
+
+---
+
+## Milestone 12 — delivered scope
+
+**Why this now.** Every earlier surface is something a trader *interrogates*. A report is
+something a trader is *told* — it arrives on a schedule, carries a period in its title, and
+is read as settled fact. Every qualification the engines attach can survive to this layer
+and then be dropped in the last step, by code doing nothing more suspicious than formatting
+a number.
+
+Delivered:
+
+- Calendar period arithmetic (daily → annual) resolved through `session_date`, so a 23:30
+  UTC Sunday fill lands in the right week.
+- Report composition from the analytics engine, pattern scan and compliance engine. The
+  builder computes nothing itself; a reporting layer that re-derives numbers ends up
+  disagreeing with the dashboard by a trade, with nothing to say which is right.
+- **Deduplicated leak attribution** — the headline figure, and the one most easily inflated.
+- **Period-over-period comparison** gated on a permutation test, FDR-corrected as one
+  family.
+- Sections that refuse individually, with reasons; `draws_conclusions` separate from having
+  data; empty periods reported as flat rather than skipped.
+- Idempotent, oldest-first scheduling keyed to the table's unique constraint, capped at 25
+  reports per run.
+- 94 new tests.
+
+**Summing detector estimates was wrong by more than a factor.** ADR 0006 already recorded
+that detectors overlap — a trader down on the day, late in the session, after two losses is
+caught by three at once — and milestone 8 handled it by ranking instead of summing. A report
+cannot duck it, because the figure it exists to produce *is* the sum. Measured on real
+scans the naive sum overstates by **1.6× to 1.9×**, and on one sample it produced
+**−$68,952** of leaks against **−$57,417** of total losses across every losing trade: not
+inflated but impossible. Cost is now attributed per trade, a trade claimed by several leaks
+keeps the largest single claim, and both figures are returned so the gap stays visible.
+
+**A period-over-period arrow is noise with a direction.** On twenty trades a month the win
+rate moves four or five points between any two months of an unchanged process. Changes are
+permutation-tested and corrected as one family, which means almost nothing is established on
+a monthly report — the accurate result rather than a missing feature.
+
+**This milestone found a shipped bug in milestones 8 and 10.**
+`control_false_discovery_rate` returned results sorted by p-value while the pattern scan and
+the what-if sweep zipped them back positionally, so a finding with p = 0.90 received the
+q-value earned by one with p = 0.001 and was published as significant — a manufactured
+discovery produced by the mechanism built to prevent manufactured discoveries. No existing
+test could see it: on all-noise samples every q-value is high however they are shuffled, and
+on a sample with one real effect the count of findings is still one. The contract is now
+positional, with regression tests at the helper and both call sites.
+
+Fixing it also **corrected a milestone 10 claim**. With the ordering right, one M10
+null-battery seed began establishing a scenario on noise. The engine was not at fault —
+2 of 25 noise sweeps establish something, about 8%, which is what a 5% FDR bound looks like.
+The test was wrong to demand zero: Benjamini–Hochberg bounds the expected *proportion* of
+false discoveries and never promises none. That test now asserts the property worth
+asserting — that the correction is what suppresses the raw significance.
+
+The reasoning is recorded in [ADR 0010](./adr/0010-periodic-reports.md), and the working
+guide is [docs/reports.md](./reports.md).
+
+**Explicitly not in milestone 12:** the AI narrative layer over reports, which reuses the
+milestone 9 placeholder contract unchanged and belongs with the frontend that renders it;
+and real scheduled execution, which needs the worker chosen in milestone 13.
+
+---
+
+## Milestone 13 — delivered scope
+
+**Why this now.** Three surfaces — the pattern scan, model training and report generation —
+have been synchronous `POST` endpoints costing seconds each, with every milestone deferring
+the worker to this one. That debt is now due. And an audit at the start of this milestone
+found the standing "every repository requires `user_id`" rule had held across 26 user-scoped
+models and every query in the codebase — which is exactly when it becomes worth replacing,
+because the worker is the thing that will break it.
+
+Delivered:
+
+- **A Postgres-backed job queue.** Claimed with `SELECT ... FOR UPDATE SKIP LOCKED`, with
+  leases for crash recovery, geometric backoff, dead-lettering, and idempotency enforced by
+  a partial unique index rather than a check-then-insert.
+- **A worker** that binds the row-level-security context from `jobs.user_id` before
+  dispatching, so a handler physically cannot reach another tenant's rows.
+- **Row-level security** on all 28 tenant tables, with `WITH CHECK` as well as `USING`.
+- **Two-tier rate limiting**, expensive routes consuming from both buckets, failing open.
+- 55 new tests, migration `0004_jobs_and_rls`.
+
+**The queue is a table and not Redis** for one reason: a job's completion and the rows it
+writes must commit together. With an external broker they cannot — the worker either
+acknowledges before its transaction commits and loses work on rollback, or commits first and
+runs the job twice. Claiming inside the same transaction as the work removes the second
+system entirely. Postgres is not a message broker and this design does not pretend
+otherwise; it polls and holds a row lock per job, which is affordable for a handful of jobs
+per trader per day.
+
+**Row-level security shipped inert on the first attempt, and only measuring caught it.**
+The policies were created, RLS enabled, `FORCE ROW LEVEL SECURITY` set — and a probe against
+a real database showed one tenant reading another's trades:
+
+```
+connected as: postgres   superuser: True
+UNBOUND connection sees 2 trades          <-- should be 0
+CROSS-TENANT ROWS VISIBLE: {bob's id}
+```
+
+Postgres exempts superusers unconditionally and table owners unless forced, and most
+deployments connect as the role that ran the migrations. This is the worst shape a security
+control can have: every check short of an actual cross-tenant read reports success. The fix
+was a non-owner `ledgerline_app` role in the migration, plus a startup check that is **fatal
+in production**. The tests carry the same lesson — they `SET LOCAL ROLE` before every
+assertion, and one of them asserts the guard returns *false* for the suite's own superuser
+connection, because a tenancy test written against the default connection would have passed
+while proving nothing.
+
+The reasoning is recorded in [ADR 0011](./adr/0011-jobs-and-tenant-isolation.md), and the
+operator guide is [docs/operations.md](./operations.md).
+
+**Explicitly not in milestone 13:** table partitioning and TimescaleDB continuous
+aggregates, which are unnecessary below roughly ten million trades and would add
+operational complexity nobody currently needs; and per-tenant queue fairness, where the
+fix when it is needed is a weighted claim rather than a second queue.
+
+---
+
+## Milestone 5 — delivered scope
+
+**Why this now.** Every backend milestone exists to attach a qualification to a number, and
+all of it survives right up to the render function. The frontend is where it dies — not
+through a bug anybody files, but because `difference` sits next to `is_established` in the
+payload and one of them is easier to render.
+
+Delivered:
+
+- Next.js 16 / React 19 / TypeScript strict / Tailwind 4, dark-first, monospaced tabular
+  numerics throughout.
+- **Evidence components** that take an `Estimate`, a `MetricChange`, a `PatternFinding` or a
+  `ModelReport` — never a bare number. Passing `estimate.value` to `<Metric>` is a type
+  error.
+- Typed API client over the backend's single error envelope, with decimals kept as strings
+  to the point of render.
+- Dashboard, trade blotter, patterns, reports and jobs screens.
+- 19 tests asserting the honesty properties directly.
+
+**The failure this milestone is built against looks like success.** A designer asks for a
+trend arrow; the dashboard ships one on a four-point win-rate move across twenty trades —
+exactly the noise [ADR 0010](./adr/0010-periodic-reports.md) refuses to call a change. The
+page looks finished, no test fails, and the product now looks *more* confident than the one
+that was careful. The same shape recurs everywhere: an `undefined_reason` becomes a dash, a
+model refusal becomes an empty state, a `Decimal` string becomes `parseFloat`.
+
+Three properties are enforced by tests rather than by review: an unestablished change
+renders no arrow; an undefined statistic renders its reason and never a zero; and a model
+that is not deployable renders no probability **even when a caller passes one**.
+
+`unchanged` is deliberately distinct from `flat`. One means the values matched, the other
+means the measurement could not tell them apart — and on a typical monthly report almost
+every metric is `unchanged`, so collapsing them would turn the honest result into a boring
+one.
+
+The reasoning is in [ADR 0012](./adr/0012-frontend-honesty.md).
+
+**Explicitly not in milestone 5:** Clerk is wired at the layout boundary but sign-in flows
+are not built, since the API client takes a token parameter rather than reaching for a
+global; and the replay chart, which is milestone 6.
+
+**A consequence worth naming.** This product will look less confident than its competitors.
+Most months establish no changes and most traders' models are refused. A journal rendering
+arrows and probabilities on the same data is not more capable, only less careful — but it
+demos better, and that pressure is real.
+
+---
+
+## Milestone 6 — delivered scope
+
+**Why this last.** Replay is the feature that sells a trading journal, and the one where the
+interface makes a claim the data cannot support. Unlike every previous milestone the claim
+is not in a number — it is in the *motion*.
+
+Delivered:
+
+- Lightweight Charts candles, stepped bar by bar with a pure playback reducer.
+- Play/pause/step/seek/speed, entry and exit markers, entry/exit/stop price lines.
+- Gap warnings in the transport, sourced from the backend's recorded gaps.
+- 21 tests over the playback engine.
+
+**A bar is not a recording.** It is an open, high, low and close over an interval; the path
+price took *within* it was never recorded and is not derivable from the four numbers that
+summarise it. A conventional replay draws a smooth line and animates a cursor along it,
+with the visual authority of a recording, and everything between two closes is an
+interpolation the charting library invented.
+
+So the replay never interpolates, and renders candles rather than a line — a line of closes
+discards the high and low, which is the only information the data has about intra-bar
+movement. This is the same constraint [ADR 0008](./adr/0008-counterfactual-simulation.md)
+already applied: excursions record that both extremes were reached without recording which
+came first, which is why the simulator resolves a stop before a target. An animated path
+would assert exactly the ordering that ADR refuses to assume, visually, where nobody thinks
+to ask for evidence.
+
+Three further rules, each of which the obvious implementation breaks:
+
+- **The chart shows only bars the playhead has reached.** Rendering the whole series and
+  moving a cursor has already told the viewer how the trade ends.
+- **A gap is not a flat market.** Any chart that connects the points it has renders "no data
+  here" and "price did not move here" identically, and on a futures chart the overnight
+  break is the largest gap in the series.
+- **Only recorded prices get a line.** A stop line at a plausible level would invent the
+  trader's plan, and a chart with one looks *more* complete than a chart without.
+
+The reasoning is in [ADR 0013](./adr/0013-replay-invents-a-path.md).
+
+**Explicitly not in milestone 6:** indicators and freehand drawings, which are a charting
+product rather than a journalling one and would be the first place a user drew a conclusion
+the data does not support.
+
+---
+
+## Follow-on — exit selection, and a bias it exposed
+
+Optimal stop/target models were in the original specification and deferred twice, out of
+milestones 10 and 11, on the grounds that the naive version is exactly the curve-fitting
+[ADR 0008](./adr/0008-counterfactual-simulation.md) refuses. Measured on pure noise, that
+naive grid search advertised improvements between **+$1,854 and +$5,089**.
+
+Delivered:
+
+- Walk-forward *selection*: pick the best rule on training sessions, apply that rule to the
+  test sessions, report only how the choice did on data it never saw.
+- Selection-stability and session-block interval gates on top of that.
+- 19 tests, `GET /predictions/exit-rule`.
+
+**The grid is not the hypothesis; the selection procedure is.** Correcting 144 comparisons
+over-corrects — a genuine moderate edge could not clear the threshold either, so the sweep
+would answer "nothing" to everyone regardless. Reframing to "does choosing this way beat
+what you already do, out of sample?" is one hypothesis tested once, and it is the question a
+trader actually has.
+
+**Then it recommended a rule on one noise sample in three**, on a driftless walk where
+optional stopping *proves* nothing can help. The cause was not the selection — it was the
+re-pricing, and it affects the shipped simulator too. One fixed 0.5R stop, no grid, no
+choosing, over 4,000 driftless-walk trades reported **+8.28 per trade**:
+
+```
+of 2,786 trades that traded through -0.5R:
+   mean actual final R  = -0.619
+   stopped at           = -0.500
+```
+
+An excursion says price *reached* a level; it does not say a fill was available there.
+Conditioning on "the extreme passed the stop" selects the paths that overshot it. Observing
+more finely shrinks the gap but never closes it, because barrier overshoot decays only with
+the square root of the sampling interval.
+
+**The sign depends on the order type.** A stop is a market order and fills at the trigger or
+worse, so assuming the trigger is optimistic. A target is a limit order and fills at the
+limit or better, so assuming the limit is conservative — the same data shows a 1R target
+reporting **−4.94 per trade**, biased against itself. So only targets are searched: an
+improvement that survives does so despite a bias working against it. After the restriction,
+**0 false recommendations in 10 noise runs**, with the positive control established 3 of 3.
+
+This is recorded against milestone 10 as well: its stop scenarios should be read as an upper
+bound rather than an estimate, and closing it properly needs bar-level fill modelling the
+schema does not yet support. Reasoning in
+[ADR 0014](./adr/0014-exit-selection-and-fill-bias.md).
+
+---
+
+## Standing architectural rules
+
+1. **Money is `Decimal`, never `float`.** Prices, P&L, commissions and fees use
+   `NUMERIC(20, 8)` in Postgres and `Decimal` in Python, end to end.
+2. **Time is `timestamptz`, stored UTC.** Session dates are derived through the
+   instrument's exchange timezone, never through the server's locale.
+3. **The domain layer imports nothing from infrastructure.** No SQLAlchemy, no
+   FastAPI, no `httpx` below `app/domain/`. This is enforced by a test.
+4. **Every tenant-owned row carries `user_id`,** and repositories require it — data
+   isolation is not left to the caller remembering a filter.
+5. **Ingestion is idempotent.** Broker identifiers are natural keys; re-running a
+   sync must converge, not duplicate.
+6. **Statistics are computed in Python and passed to the model as data.** The AI
+   layer receives a metrics payload and may only reference values present in it.
+7. **Design for 10⁵–10⁶ trades per user.** Every access path used by the UI is
+   indexed; heavy aggregates are materialized, not computed per request.

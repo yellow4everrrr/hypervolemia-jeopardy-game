@@ -1,0 +1,3 @@
+
+# Playwright, when run from the wrong directory
+/test-results/

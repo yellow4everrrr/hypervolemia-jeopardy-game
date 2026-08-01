@@ -1,0 +1,102 @@
+[project]
+name = "ledgerline-api"
+version = "0.1.0"
+description = "Ledgerline — institutional-grade AI trading journal API"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+    "structlog>=24.4",
+    "redis>=5.2",
+    "httpx>=0.28",
+    "pyjwt[crypto]>=2.10",
+    "orjson>=3.10",
+    "tenacity>=9.0",
+    "websockets>=14.1",
+    "anthropic>=0.116",
+    # Direct dependency, not merely transitive through pyjwt[crypto]: broker credentials
+    # are encrypted at rest with Fernet in `app.infrastructure.secrets.encrypted`, and a
+    # library holding the keys to those should not arrive by accident.
+    "cryptography>=44",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "types-redis",
+]
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["."]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "C4", "SIM", "RUF", "ASYNC", "DTZ", "TID"]
+ignore = [
+    "B008",   # FastAPI dependency injection relies on calls in defaults
+    "RUF012", # SQLAlchemy declarative attributes are not immutable
+    "N811",   # `from sqlalchemy.dialects.postgresql import UUID as PgUUID` is idiomatic
+    "RUF002", # Docstrings use en dashes and × deliberately
+    "RUF003", # ... and so do comments
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Migration bodies are generated from the model metadata; reformatting them would make
+# them harder to diff against a fresh autogenerate run.
+"migrations/versions/*.py" = ["E501"]
+# Test fixtures are module-level constants named after the instrument they describe.
+"tests/*" = ["N811"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"decimal.Decimal.__float__".msg = "Never convert monetary Decimals to float."
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+plugins = ["pydantic.mypy"]
+warn_unused_ignores = true
+disallow_untyped_decorators = false
+exclude = "^(migrations/versions/|tests/)"
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+ignore_errors = true
+
+# aioboto3 ships no type stubs. The S3 store sits behind a fully typed protocol, so
+# writing stubs for a swappable SDK would be maintenance without benefit.
+[[tool.mypy.overrides]]
+module = ["aioboto3", "aioboto3.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-q --strict-markers"
+markers = [
+    "db: requires a live PostgreSQL/TimescaleDB instance (set LEDGERLINE_TEST_DATABASE_URL)",
+]
+filterwarnings = ["error::DeprecationWarning:app.*"]
+
+[tool.coverage.run]
+branch = true
+source = ["app"]
