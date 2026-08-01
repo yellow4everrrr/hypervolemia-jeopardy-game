@@ -67,7 +67,7 @@ class ExcursionUpdate:
 
 
 class BarReader(Protocol):
-    async def load_series(
+    async def load_at(
         self,
         instrument_id: UUID,
         timeframe: Timeframe,
@@ -145,7 +145,23 @@ class ComputeExcursions:
                 trade.duration_seconds
                 or max(int((trade.closed_at - trade.opened_at).total_seconds()), 1)
             )
-            series = await self._bars.load_series(
+            # `load_at`, not `load_series` — the same distinction ADR 0016 records for the
+            # replay endpoint, which was never applied here.
+            #
+            # `choose_timeframe` picks a resolution from the holding period, and anything
+            # over fifteen minutes selects 2m or coarser. A feed that writes 1m therefore
+            # has no row at the requested resolution, `load_series` returns an empty
+            # series, and the trade is counted as `skipped_no_bars`. Measured on a
+            # 1,403-trade history with minute bars for every session: 478 measured, 925
+            # reported as having no bars, all 925 of them longer than fifteen minutes.
+            #
+            # The damage is in what that number then means. `coverage_ratio` is presented
+            # as the honest caveat on the excursion statistics — a low ratio is documented
+            # as "these describe a biased subset". It did, but not the subset the caption
+            # names: the sample was silently filtered to trades shorter than a quarter of
+            # an hour, and holding period correlates with almost everything the excursion
+            # statistics are used to argue about.
+            series = await self._bars.load_at(
                 trade.instrument_id,
                 timeframe,
                 start=trade.opened_at,

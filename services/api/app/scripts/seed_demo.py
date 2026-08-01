@@ -59,12 +59,12 @@ from app.infrastructure.db.models.broker import Account
 from app.infrastructure.db.models.catalog import Strategy, StrategyRule
 from app.infrastructure.db.models.identity import User
 from app.infrastructure.db.models.instruments import Instrument
-from app.infrastructure.db.models.marketdata import MarketBar
 from app.infrastructure.db.models.trading import Execution, Trade, TradeExecution
 from app.infrastructure.db.repositories.reports import SqlAlchemyReportRepository
 from app.infrastructure.db.session import dispose_engine, session_scope
 from app.infrastructure.db.uow import SqlAlchemyUnitOfWork
 from app.reports.periods import period_containing
+from app.scripts.backfill_demo_bars import write_bars
 
 logger = get_logger(__name__)
 
@@ -100,15 +100,10 @@ WIN_RATE_LATE = 0.31
 #: :func:`_excursions`.
 LOSER_MFE_BANDS = ((0.85, 0.0, 0.5), (0.12, 0.5, 1.0), (0.03, 1.0, 1.8))
 
-#: Bars written for one trade, so the replay screen has a chart. One trade rather than all
-#: of them because 1,400 trades of minute bars is a quarter of a million rows for a demo.
-#:
-#: The bars go on the **most recently opened** trade, and that is a deliberate coupling
-#: rather than an arbitrary pick: the blotter orders newest-first, so anything that opens
+#: The trade the blotter opens on. Bars now cover every session, but this one is still
+#: singled out for its executions: the blotter orders newest-first, so anything that opens
 #: "the first trade in the list" — a reviewer clicking the top row, the route smoke test
-#: fetching ``?limit=1`` — lands on the one trade that has a chart. Attaching them to the
-#: oldest trade instead put an empty chart behind the most obvious click in the app.
-REPLAY_BARS = 180
+#: fetching ``?limit=1`` — lands on it.
 
 
 def _excursions(
@@ -238,7 +233,7 @@ async def main() -> None:
         day = FIRST_SESSION
         sessions_made = 0
         #: Reassigned every iteration, so it holds the last trade created — and the loop
-        #: runs chronologically, so the last created is the most recent. See REPLAY_BARS.
+        #: runs chronologically, so the last created is the most recent.
         replay_trade: tuple[Trade, Instrument] | None = None
 
         while sessions_made < SESSIONS:
@@ -310,6 +305,18 @@ async def main() -> None:
         assert replay_trade is not None
         await _seed_replay(session, rng, user, account, *replay_trade)
         await session.flush()
+
+        # Bars for every session, not just one trade's. The generator is anchored to the
+        # entry, exit and excursion prices each trade actually recorded — see
+        # `backfill_demo_bars`. The version that used to live here was a random walk
+        # started six points below the entry, which produced a chart that did not contain
+        # its own trade: the replay it was written for had an entry of 5175.96 against a
+        # bar spanning 5163.78-5165.13. That renders without complaint, because the chart
+        # widens to fit a level outside the candles, and it is exactly what
+        # `compute_excursions` refuses with "entry price must lie within the observed
+        # price range".
+        bars_written, bar_sessions = await write_bars(session)
+        await session.flush()
         await _seed_reports(session, user)
 
         total, net_total = (
@@ -322,6 +329,8 @@ async def main() -> None:
             sessions=SESSIONS,
             net=str(net_total),
             replay_trade=str(replay_trade[0].id),
+            bars=bars_written,
+            bar_sessions=bar_sessions,
         )
 
     await dispose_engine()
@@ -445,33 +454,6 @@ async def _seed_replay(
             ),
         ]
     )
-
-    # The column is nullable, but every trade this script writes sets it. Asserting is
-    # better than a cast: if the seed ever produces a trade without an entry price, the
-    # bars would be generated around a meaningless number and the chart would look fine.
-    assert trade.avg_entry_price is not None
-    price = float(trade.avg_entry_price) - 6
-    start = trade.opened_at - timedelta(minutes=45)
-    for minute in range(REPLAY_BARS):
-        open_price = price
-        close_price = price + rng.gauss(0, 0.8)
-        session.add(  # type: ignore[attr-defined]
-            MarketBar(
-                instrument_id=instrument.id, timeframe="1m", source="demo",
-                ts=start + timedelta(minutes=minute),
-                open=Decimal(str(round(open_price, 2))),
-                high=Decimal(
-                    str(round(max(open_price, close_price) + abs(rng.gauss(0, 0.6)), 2))
-                ),
-                low=Decimal(
-                    str(round(min(open_price, close_price) - abs(rng.gauss(0, 0.6)), 2))
-                ),
-                close=Decimal(str(round(close_price, 2))),
-                volume=Decimal(rng.randint(200, 5000)),
-            )
-        )
-        price = close_price
-
 
 if __name__ == "__main__":
     asyncio.run(main())
