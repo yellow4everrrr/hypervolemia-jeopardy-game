@@ -132,6 +132,27 @@ def choose_timeframe(duration_seconds: int) -> tuple[Timeframe, Timeframe]:
     return Timeframe.H1, Timeframe.D1
 
 
+def max_window_padding() -> tuple[timedelta, timedelta]:
+    """The widest lead and trail `build_window` can ever put around a trade.
+
+    For callers that need to ask "could this trade's window contain any bars?" without
+    building the window — notably the screenshot sweep, which has to answer it in SQL for
+    thousands of trades at once and must not reproduce `build_window`'s timeframe choice
+    to do so.
+
+    This is deliberately a **bound, not a prediction**. A caller filtering on it keeps a
+    superset of the trades whose windows really do hold bars, so the filter can never
+    exclude a trade that would have captured; it only discards trades that provably
+    cannot. Derived from the same constants `build_window` uses, so widening the context
+    or adding a coarser execution timeframe moves this with it.
+    """
+    coarsest = max(timeframe.seconds for _, timeframe in _TIMEFRAME_BY_DURATION)
+    return (
+        timedelta(seconds=coarsest * DEFAULT_BARS_BEFORE),
+        timedelta(seconds=coarsest * DEFAULT_BARS_AFTER),
+    )
+
+
 def build_window(
     *,
     instrument_symbol: str,

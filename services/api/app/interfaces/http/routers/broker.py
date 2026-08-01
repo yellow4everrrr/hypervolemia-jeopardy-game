@@ -12,13 +12,14 @@ from app.core.config import get_settings
 from app.core.errors import NotFoundError, ValidationError
 from app.core.ids import uuid7
 from app.core.logging import get_logger
-from app.domain.common.enums import ConnectionStatus
+from app.domain.common.enums import ConnectionStatus, JobKind
 from app.infrastructure.brokers.tradovate.factory import (
     build_client,
     build_sync,
     credentials_from_secret,
 )
 from app.infrastructure.db.models.broker import Account, BrokerConnection, SyncRun
+from app.infrastructure.db.uow import SqlAlchemyUnitOfWork
 from app.infrastructure.secrets.store import credential_reference
 from app.interfaces.http.deps import CurrentUserDep, SecretStoreDep, SessionDep
 from app.interfaces.http.schemas.broker import (
@@ -30,6 +31,7 @@ from app.interfaces.http.schemas.broker import (
     SyncRunList,
     SyncRunSummary,
 )
+from app.jobs.queue import JobQueue
 
 router = APIRouter(prefix="/broker", tags=["broker"])
 logger = get_logger(__name__)
@@ -173,6 +175,19 @@ async def sync_connection(
         )
     finally:
         await client._http.aclose()
+
+    # This is what makes screenshot capture *automatic*. Queued rather than rendered here
+    # because a first import can produce thousands of trades, and a sync that also drew
+    # six charts each would take minutes and time out. Enqueued unconditionally: the
+    # handler sweeps for trades that have none, so a run with nothing new is a cheap
+    # query rather than a special case the caller has to detect.
+    await JobQueue(session).enqueue(
+        user_id=user.id,
+        kind=JobKind.CAPTURE_SCREENSHOTS,
+        payload={},
+        account_id=None,
+    )
+    await SqlAlchemyUnitOfWork(session).commit()
 
     return SyncResponse(
         connection_id=outcome.connection_id,

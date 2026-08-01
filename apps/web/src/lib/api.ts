@@ -89,6 +89,51 @@ export async function request<T>(
   return (await response.json()) as T;
 }
 
+/**
+ * Fetch a binary endpoint with the same credentials `request` uses, as an object URL.
+ *
+ * Needed because **an `<img src>` cannot carry an `Authorization` header.** The browser
+ * issues that request itself, with no hook to add one, so a private image endpoint
+ * behind bearer auth returns 401 and the tag renders broken — which is exactly what the
+ * screenshot gallery did: six `ERR_BLOCKED_BY_ORB` failures, because a cross-origin
+ * `<img>` that receives a JSON error body is discarded by Opaque Response Blocking
+ * before it ever reaches an `onerror` handler. Nothing appeared in the API logs beyond
+ * six ordinary 401s.
+ *
+ * The alternative is a presigned bucket URL, which needs no header — and is a capability
+ * that outlives the session, travels in a referrer, and cannot be revoked. For images of
+ * a trader's positions, fetching the bytes and holding a blob URL is the better trade.
+ *
+ * The caller owns the returned URL and must `URL.revokeObjectURL` it, or the blob stays
+ * alive for the life of the document.
+ */
+export async function requestObjectUrl(
+  path: string,
+  options: Pick<RequestOptions, "token" | "signal"> = {},
+): Promise<string> {
+  const headers: Record<string, string> = {};
+  if (options.token) headers["Authorization"] = `Bearer ${options.token}`;
+  const devUser = process.env.NEXT_PUBLIC_DEV_USER;
+  if (devUser && !options.token) headers["X-Debug-User"] = devUser;
+
+  const response = await fetch(`${API_BASE}${path}`, {
+    headers,
+    signal: options.signal,
+  });
+
+  if (!response.ok) {
+    let parsed: ApiErrorBody | null = null;
+    try {
+      parsed = (await response.json()) as ApiErrorBody;
+    } catch {
+      parsed = null;
+    }
+    throw new ApiError(response.status, parsed, response.statusText);
+  }
+
+  return URL.createObjectURL(await response.blob());
+}
+
 /** Query keys, centralised so an invalidation cannot miss a cache by typo. */
 export const keys = {
   trades: (filters?: Record<string, unknown>) => ["trades", filters ?? {}] as const,

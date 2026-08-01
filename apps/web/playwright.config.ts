@@ -28,7 +28,13 @@ export default defineConfig({
   reporter: process.env.CI ? [["github"], ["list"]] : [["list"]],
 
   use: {
-    baseURL: process.env.SMOKE_BASE_URL ?? "http://127.0.0.1:3000",
+    // `localhost`, not `127.0.0.1`, and the distinction is not cosmetic: the API's
+    // default `cors_origins` is `http://localhost:3000`, and a browser treats the two
+    // spellings as different origins. Loading the app from `127.0.0.1` puts every
+    // client-side fetch on the wrong side of CORS, so six routes fail with empty content
+    // while the app is in fact working — a confusing failure that says nothing about the
+    // code under test.
+    baseURL: process.env.SMOKE_BASE_URL ?? "http://localhost:3000",
     // Kept on failure only: an artefact per passing route is noise, and the screenshot of
     // a failure is the fastest way to tell a crash from a blank page.
     screenshot: "only-on-failure",

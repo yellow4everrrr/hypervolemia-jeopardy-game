@@ -282,6 +282,13 @@ class JobKind(StrEnum):
     #: and load-balancer timeouts and far past the point where a person believes the page
     #: is broken. Reducing the resampling does not help — the cost is the re-pricing.
     RUN_SIMULATION = "run_simulation"
+    #: Render and store the six chart images per trade. Queued after a sync rather than
+    #: done inline: a backfill importing six months produces thousands of trades, and
+    #: rendering during ingestion would make the import time a function of how many
+    #: charts a PNG encoder can draw. One sweeping job rather than a job per trade — a
+    #: fan-out would bury every other kind in the queue behind a backfill, and a sweep
+    #: is idempotent by construction because a re-run simply finds fewer trades.
+    CAPTURE_SCREENSHOTS = "capture_screenshots"
     MEASURE_EXCURSIONS = "measure_excursions"
 
 

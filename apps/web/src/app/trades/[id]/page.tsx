@@ -5,6 +5,7 @@ import { use } from "react";
 
 import { ReplayChart, type ChartMarker, type PriceLine } from "@/components/replay/chart";
 import { ReplayControls, usePlayback } from "@/components/replay/controls";
+import { Screenshots } from "@/components/replay/screenshots";
 import { PageHeader } from "@/components/shell";
 import { request } from "@/lib/api";
 import { formatMoney, formatPrice } from "@/lib/format";
@@ -133,6 +134,10 @@ export default function TradeReplayPage({
               state={state}
               dispatch={dispatch}
             />
+
+            {/* The replay is live — it re-reads bars on every visit. These are what
+                survives a re-fetch, a correction, or an aged-out bar history. */}
+            <Screenshots tradeId={id} />
 
             <p className="text-[11px] leading-relaxed text-slate-600">
               This is a reconstruction at {data.served_timeframe} resolution, not a

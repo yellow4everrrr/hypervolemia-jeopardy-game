@@ -7,13 +7,15 @@ through a day's trades feel broken.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Response
 from sqlalchemy import select
 
+from app.application.use_cases.capture_screenshots import CaptureScreenshots
 from app.application.use_cases.compute_excursions import ComputeExcursions, summarise
 from app.core.errors import NotFoundError
 from app.domain.common.enums import ExecutionRole, Timeframe
@@ -22,8 +24,10 @@ from app.infrastructure.db.models.instruments import Instrument
 from app.infrastructure.db.models.trading import Trade, TradeExecution
 from app.infrastructure.db.repositories.bars import SqlAlchemyBarRepository
 from app.infrastructure.db.repositories.excursions import SqlAlchemyExcursionRepository
+from app.infrastructure.db.repositories.screenshots import SqlAlchemyScreenshotRepository
 from app.infrastructure.db.uow import SqlAlchemyUnitOfWork
-from app.interfaces.http.deps import CurrentUserDep, SessionDep
+from app.infrastructure.storage.objects import screenshot_key
+from app.interfaces.http.deps import CurrentUserDep, ObjectStoreDep, SessionDep
 
 router = APIRouter(prefix="/replay", tags=["replay"])
 
@@ -167,6 +171,79 @@ async def compute_excursions(
     )
     result = await use_case.execute(user_id=user.id, account_id=account_id, limit=limit)
     return summarise(result)
+
+
+@router.post("/trades/{trade_id}/screenshots", summary="Capture chart images for a trade")
+async def capture_screenshots(
+    trade_id: UUID,
+    user: CurrentUserDep,
+    session: SessionDep,
+    store: ObjectStoreDep,
+) -> dict[str, Any]:
+    """Render and store the six frames now, rather than waiting for the queue.
+
+    The automatic path is a job enqueued per trade after a sync; this is the same use
+    case invoked directly, for a trade whose bars arrived late or whose first capture
+    predates a backfill. Idempotent either way — content-addressed keys and an upsert on
+    (trade, kind, timeframe).
+    """
+    outcome = await CaptureScreenshots(
+        repository=SqlAlchemyScreenshotRepository(session),
+        storage=store,
+        uow=SqlAlchemyUnitOfWork(session),
+        key_builder=screenshot_key,
+    ).execute(user_id=user.id, trade_id=trade_id, now=datetime.now(UTC))
+    return outcome.to_payload()
+
+
+@router.get("/trades/{trade_id}/screenshots", summary="Chart images for a trade")
+async def list_screenshots(
+    trade_id: UUID, user: CurrentUserDep, session: SessionDep
+) -> dict[str, Any]:
+    rows = await SqlAlchemyScreenshotRepository(session).list_for_trade(user.id, trade_id)
+    return {
+        "items": [
+            {
+                "id": str(row.id),
+                "kind": row.kind.value,
+                "timeframe": row.timeframe.value if row.timeframe else None,
+                "content_type": row.content_type,
+                "width": row.width,
+                "height": row.height,
+                "byte_size": row.byte_size,
+                "captured_at": row.captured_at.isoformat(),
+                "source": row.source,
+            }
+            for row in rows
+        ]
+    }
+
+
+@router.get("/screenshots/{screenshot_id}/image", summary="One chart image")
+async def screenshot_image(
+    screenshot_id: UUID,
+    user: CurrentUserDep,
+    session: SessionDep,
+    store: ObjectStoreDep,
+) -> Response:
+    """Stream the bytes through the API rather than handing out a bucket URL.
+
+    A presigned URL would be cheaper and would also be a capability that outlives the
+    session, travels in a referrer header and cannot be revoked. These are images of a
+    trader's positions; the extra hop is worth it.
+    """
+    row = await SqlAlchemyScreenshotRepository(session).get(user.id, screenshot_id)
+    if row is None:
+        raise NotFoundError(f"screenshot {screenshot_id} not found")
+
+    data = await store.get(row.storage_key)
+    return Response(
+        content=data,
+        media_type=row.content_type,
+        # Immutable: the key is a hash of the bytes, so a given id always returns the
+        # same image and a cache never needs to revalidate.
+        headers={"Cache-Control": "private, max-age=31536000, immutable"},
+    )
 
 
 @router.get("/bars/{instrument_id}", summary="Raw bars for an instrument")

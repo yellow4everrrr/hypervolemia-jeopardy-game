@@ -136,6 +136,16 @@ class Settings(BaseSettings):
         return self.environment is Environment.PRODUCTION
 
     @property
+    def is_deployed(self) -> bool:
+        """Staging or production — anywhere that is not a developer's machine.
+
+        Named once because several subsystems need exactly this distinction and spelling
+        it `environment in (STAGING, PRODUCTION)` at each of them is how one of them
+        eventually gets it wrong.
+        """
+        return self.environment in (Environment.STAGING, Environment.PRODUCTION)
+
+    @property
     def requires_secret_encryption(self) -> bool:
         """Whether broker credentials must be encrypted at rest here.
 
@@ -144,7 +154,7 @@ class Settings(BaseSettings):
         The failure has to be loud, because the alternative — a store that silently
         writes plaintext — keeps working perfectly until the day the dump leaks.
         """
-        return self.environment in (Environment.STAGING, Environment.PRODUCTION)
+        return self.is_deployed
 
     @property
     def sync_database_url(self) -> str:

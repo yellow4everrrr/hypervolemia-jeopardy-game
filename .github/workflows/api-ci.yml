@@ -47,7 +47,12 @@ jobs:
         run: mypy app
 
       - name: Test
-        run: pytest --cov --cov-report=term-missing
+        # `-m "not db"` explicitly, rather than relying on the database-backed tests
+        # skipping themselves when the URL is unset. Both work, but the marker states the
+        # split this job intends: everything that does not need PostgreSQL runs here, and
+        # `pytest -m db` in the migrations job runs the rest. A skip is silent about
+        # whether a test was meant to run somewhere else.
+        run: pytest -m "not db" --cov --cov-report=term-missing
 
   migrations:
     name: Migrations apply and roll back

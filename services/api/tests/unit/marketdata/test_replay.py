@@ -17,6 +17,7 @@ from app.domain.marketdata.replay import (
     build_risk_box,
     build_window,
     choose_timeframe,
+    max_window_padding,
 )
 from app.infrastructure.storage.objects import (
     InMemoryObjectStore,
@@ -258,3 +259,33 @@ async def test_missing_object_raises_not_found() -> None:
     store = InMemoryObjectStore()
     with pytest.raises(NotFoundError):
         await store.get("screenshots/nope")
+
+
+@pytest.mark.parametrize(
+    "held_seconds",
+    [1, 59, 120, 121, 900, 3_600, 14_400, 86_400, 604_800, 604_801, 5_000_000],
+    ids=lambda seconds: f"{seconds}s",
+)
+def test_the_padding_bound_covers_every_window_it_claims_to(held_seconds: int) -> None:
+    """`max_window_padding` must be an upper bound, not an average.
+
+    The screenshot sweep uses it to discard trades whose windows cannot contain a bar.
+    That filter is only safe while the bound is genuinely wider than every window
+    `build_window` produces — one duration where the real lead exceeds the claimed lead
+    turns the filter into a silent data-loss bug: the trade is dropped from the candidate
+    list, no capture runs, and the sweep reports success.
+
+    Parametrised across the timeframe thresholds and their boundaries because the
+    execution timeframe is chosen by a lookup table, so the interesting durations are the
+    ones either side of each step.
+    """
+    lead, trail = max_window_padding()
+    window = build_window(
+        instrument_symbol="ESU6",
+        opened_at=OPENED,
+        closed_at=OPENED + timedelta(seconds=held_seconds),
+        duration_seconds=held_seconds,
+    )
+
+    assert OPENED - lead <= window.window_start
+    assert window.window_end <= OPENED + timedelta(seconds=held_seconds) + trail

@@ -165,3 +165,50 @@ test("the replay chart draws bars rather than an empty pane", async ({ page }) =
     "replay reported zero bars — the 1m-to-2m aggregation is not wired up",
   ).toBeGreaterThan(0);
 });
+
+test("captured chart images decode in the browser", async ({ page }) => {
+  /**
+   * The unit tests assert that the gallery fetches with credentials and renders a blob
+   * URL. Only a real browser can assert the thing that actually broke: that the bytes
+   * arriving are a decodable image.
+   *
+   * The first version used `<img src={endpoint}>`. It could not attach an auth header,
+   * so the API returned 401, and cross-origin Opaque Response Blocking discarded the
+   * JSON error before `onerror` could fire. The page looked fine — heading, count,
+   * captions, six figures — with six invisible broken images inside it. `naturalWidth`
+   * is what tells them apart; every text assertion passes either way.
+   */
+  const apiBase = process.env.SMOKE_API_BASE ?? "http://127.0.0.1:8000/api/v1";
+  const headers = { "X-Debug-User": process.env.SMOKE_DEV_USER ?? "demo" };
+
+  const trades = await page.request.get(`${apiBase}/trades?limit=1`, { headers });
+  const { items } = (await trades.json()) as { items: { id: string }[] };
+  const tradeId = items[0]!.id;
+
+  // Capture through the API process rather than the queue: locally each process owns its
+  // own in-memory object store, so bytes written by the worker are unreadable here.
+  const captured = await page.request.post(
+    `${apiBase}/replay/trades/${tradeId}/screenshots`,
+    { headers },
+  );
+  expect(captured.ok()).toBeTruthy();
+  const outcome = (await captured.json()) as { captured: unknown[]; skipped: string | null };
+  test.skip(outcome.captured.length === 0, `no bars for this trade: ${outcome.skipped}`);
+
+  await page.goto(`/trades/${tradeId}`);
+  await page.waitForSelector("figure img", { timeout: 20_000 });
+
+  const images = await page.evaluate(() =>
+    Array.from(document.querySelectorAll<HTMLImageElement>("figure img")).map((image) => ({
+      complete: image.complete,
+      width: image.naturalWidth,
+    })),
+  );
+
+  expect(images.length, "no chart images rendered").toBe(6);
+  for (const image of images) {
+    expect(image.complete && image.width > 0, "an image element rendered but never decoded").toBe(
+      true,
+    );
+  }
+});

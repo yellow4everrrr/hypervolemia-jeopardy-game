@@ -20,6 +20,10 @@ from app.infrastructure.secrets.store import (
     InMemorySecretStore,
     SecretStore,
 )
+from app.infrastructure.storage.objects import (
+    ObjectStore,
+    build_object_store,
+)
 from app.interfaces.http.auth import AuthenticatedPrincipal, ClerkTokenVerifier
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
@@ -60,6 +64,33 @@ def get_secret_store() -> SecretStore:
 
 
 SecretStoreDep = Annotated[SecretStore, Depends(get_secret_store)]
+
+
+@lru_cache(maxsize=1)
+def get_object_store() -> ObjectStore:
+    """Where rendered chart images live, as a request dependency.
+
+    The choice itself lives in `build_object_store`, in infrastructure, because the
+    background worker needs the same one and a queue handler should not import the HTTP
+    layer to find out where a file goes.
+
+    Cached, so the local in-memory store is one dict for the process rather than a fresh
+    empty one per request — without which every capture would be written to a store that
+    is discarded before anything can read it.
+
+    **Locally the worker and the API do not share it.** Each process gets its own dict, so
+    a capture performed by the background sweep writes bytes the API cannot read, and the
+    gallery answers 404 for every frame while the rows sit in the database looking
+    healthy. Deployed, both processes point at the same bucket and the problem does not
+    exist — which is precisely why it is worth naming here, since the only place it
+    appears is the environment where it will be mistaken for a bug in the capture code.
+    Locally, use the per-trade ``POST`` endpoint, which renders inside the API process, or
+    run against MinIO by setting ``LEDGERLINE_S3_ENDPOINT_URL``.
+    """
+    return build_object_store(get_settings())
+
+
+ObjectStoreDep = Annotated[ObjectStore, Depends(get_object_store)]
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:

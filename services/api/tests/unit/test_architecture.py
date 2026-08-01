@@ -94,6 +94,22 @@ def test_application_depends_only_on_the_domain_and_its_ports() -> None:
     assert _violations("application", FORBIDDEN_IN_APPLICATION) == []
 
 
+def test_the_worker_does_not_reach_into_the_http_layer() -> None:
+    """`app/jobs/` runs without a web server and must not depend on one.
+
+    The queue handlers execute in a worker process that never serves a request. Importing
+    `app.interfaces.http` there is easy — the FastAPI dependency providers are ordinary
+    functions and calling one works — and it quietly makes the worker's behaviour a
+    function of the HTTP layer's wiring. The screenshot handler did exactly this,
+    importing `get_object_store` from `deps` to decide where a PNG goes, and nothing
+    objected: the rules above cover `domain` and `application` and stopped there.
+
+    The factory now lives in infrastructure, where both callers can reach it without one
+    layer borrowing from another.
+    """
+    assert _violations("jobs", {"app.interfaces", "fastapi", "starlette"}) == []
+
+
 def test_core_stays_framework_free_apart_from_configuration() -> None:
     """``core`` may use pydantic for settings and structlog for logging — nothing else."""
     allowed = {"sqlalchemy", "fastapi", "starlette", "httpx", "redis"}
@@ -101,7 +117,8 @@ def test_core_stays_framework_free_apart_from_configuration() -> None:
 
 
 @pytest.mark.parametrize(
-    "package", ["domain", "application", "core", "infrastructure", "interfaces", "ai"]
+    "package",
+    ["domain", "application", "core", "infrastructure", "interfaces", "ai", "jobs"],
 )
 def test_every_package_is_importable(package: str) -> None:
     """A module that only imports under some conditions is a runtime failure waiting."""

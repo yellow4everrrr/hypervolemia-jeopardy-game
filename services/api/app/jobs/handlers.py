@@ -18,22 +18,31 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.use_cases.capture_screenshots import CaptureScreenshots
 from app.application.use_cases.detect_patterns import DetectPatterns
 from app.application.use_cases.generate_report import GenerateReport
 from app.application.use_cases.run_simulation import RunSimulation
 from app.application.use_cases.train_models import TrainModels
+from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.domain.common.enums import JobKind, ReportType
 from app.infrastructure.db.models.jobs import Job
 from app.infrastructure.db.repositories.ml import SqlAlchemyModelRepository
 from app.infrastructure.db.repositories.patterns import SqlAlchemyPatternRepository
 from app.infrastructure.db.repositories.reports import SqlAlchemyReportRepository
+from app.infrastructure.db.repositories.screenshots import SqlAlchemyScreenshotRepository
 from app.infrastructure.db.repositories.simulation import SqlAlchemySimulationRepository
 from app.infrastructure.db.uow import SqlAlchemyUnitOfWork
+from app.infrastructure.storage.objects import build_object_store, screenshot_key
 
 logger = get_logger(__name__)
 
 Handler = Callable[[AsyncSession, Job], Awaitable[dict[str, Any]]]
+
+#: Trades captured in one sweep. Each renders six PNGs, so this bounds the job's runtime
+#: rather than its usefulness — whatever is left is picked up by the next sweep, because
+#: the query selects trades that still have no screenshots.
+CAPTURE_SWEEP_LIMIT = 200
 
 
 def _account_id(job: Job) -> UUID | None:
@@ -137,6 +146,56 @@ async def run_simulation(session: AsyncSession, job: Job) -> dict[str, Any]:
     return outcome.to_payload()
 
 
+async def capture_screenshots(session: AsyncSession, job: Job) -> dict[str, Any]:
+    """Render and store chart images, for one named trade or for whatever still lacks them.
+
+    With a ``trade_id`` in the payload this captures that trade — the path the UI's
+    re-capture button uses. Without one it sweeps, which is the automatic path enqueued
+    after every broker sync.
+
+    A sweep rather than a job per trade: a backfill importing six months would otherwise
+    put thousands of captures in the queue ahead of every other kind of work. It is also
+    idempotent by construction, since a re-run simply finds fewer trades, and it
+    self-heals — a trade whose bars had not arrived yet captures nothing and is still
+    outstanding for the next sweep to find.
+
+    Idempotent per trade too, through content addressing and an upsert: the render is a
+    pure function of the bars, so a re-run writes the same storage key and replaces the
+    row rather than duplicating it. A worker that dies between storing the object and
+    committing the row redoes both and converges.
+    """
+    repository = SqlAlchemyScreenshotRepository(session)
+    use_case = CaptureScreenshots(
+        repository=repository,
+        storage=build_object_store(get_settings()),
+        uow=SqlAlchemyUnitOfWork(session),
+        key_builder=screenshot_key,
+    )
+
+    raw = job.payload.get("trade_id")
+    if isinstance(raw, str):
+        targets = [UUID(raw)]
+    else:
+        limit = job.payload.get("limit")
+        targets = await repository.trades_needing_capture(
+            job.user_id, limit=limit if isinstance(limit, int) else CAPTURE_SWEEP_LIMIT
+        )
+
+    now = datetime.now(UTC)
+    captured = skipped = 0
+    for trade_id in targets:
+        outcome = await use_case.execute(user_id=job.user_id, trade_id=trade_id, now=now)
+        if outcome.skipped:
+            skipped += 1
+        else:
+            captured += len(outcome.captured)
+
+    # `trades_skipped` is reported rather than swallowed: a sweep that captures nothing
+    # because no bars are stored is a successful job and a useless one, and the two are
+    # indistinguishable from the job state alone.
+    return {"trades": len(targets), "frames": captured, "trades_skipped": skipped}
+
+
 #: The dispatch table. A job kind with no handler is a configuration error rather than a
 #: runtime surprise: :func:`handler_for` raises, the worker records it, and the job goes
 #: to ``dead`` after its attempts rather than silently succeeding.
@@ -145,6 +204,7 @@ HANDLERS: dict[JobKind, Handler] = {
     JobKind.TRAIN_MODELS: train_models,
     JobKind.GENERATE_REPORTS: generate_reports,
     JobKind.RUN_SIMULATION: run_simulation,
+    JobKind.CAPTURE_SCREENSHOTS: capture_screenshots,
 }
 
 

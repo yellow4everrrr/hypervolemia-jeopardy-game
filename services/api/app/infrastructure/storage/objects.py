@@ -215,3 +215,27 @@ class S3ObjectStore:  # pragma: no cover — requires a live endpoint
                 ExpiresIn=expires_seconds,
             )
             return url
+
+
+def build_object_store(settings: Any) -> ObjectStore:
+    """Where rendered chart images live, chosen from configuration.
+
+    Lives in infrastructure rather than beside the FastAPI dependency that used to own it,
+    because the background worker needs the same choice and reaching into
+    `app.interfaces.http.deps` from `app.jobs` would make a queue handler depend on the
+    HTTP layer to decide where a file goes. Nothing enforces that boundary for `app.jobs`
+    — the architecture test covers `domain` and `application` — so it has to be kept by
+    construction.
+
+    S3-compatible when deployed, in-memory locally, so a developer sees the capture
+    pipeline work end to end without provisioning a bucket. Acceptable because screenshots
+    are re-renderable from bars that are still in the database; the same shortcut would not
+    be acceptable for secrets.
+    """
+    if settings.is_deployed:
+        return S3ObjectStore(
+            settings.s3_bucket,
+            region=settings.s3_region,
+            endpoint_url=settings.s3_endpoint_url,
+        )
+    return InMemoryObjectStore()
