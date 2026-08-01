@@ -149,11 +149,29 @@ const DIRECTION_TONE: Record<MetricChange["direction"], string> = {
   unchanged: "text-slate-500 italic",
 };
 
+/**
+ * Solid shapes for what was established, a hollow one for what was not.
+ *
+ * `unchanged` used to be a literal `?`. Sitting immediately before a number in a
+ * monospace column it read as a rendering failure — `? 199.22` looks like a glyph the
+ * font could not draw, which is the reading a reader reaches for first when the
+ * neighbouring rows show proper symbols. On a monthly report almost every row is
+ * unestablished, so the page looked broken rather than careful.
+ *
+ * The replacement has to stay **non-directional**. `≈` and `~` both assert near-equality,
+ * which is `flat`'s meaning — "the values matched" — and the whole point of `unchanged`
+ * is that the measurement could not tell them apart. Collapsing the two shows a trader a
+ * settled fact where there is an open question. A hollow diamond belongs to the same
+ * geometric family as the arrows, so it reads as "a direction was looked for", and claims
+ * nothing about which way.
+ *
+ * The glyph is `aria-hidden`; screen readers get the explicit sentence below it.
+ */
 const DIRECTION_GLYPH: Record<MetricChange["direction"], string> = {
   up: "▲",
   down: "▼",
   flat: "=",
-  unchanged: "?",
+  unchanged: "◇",
 };
 
 /**

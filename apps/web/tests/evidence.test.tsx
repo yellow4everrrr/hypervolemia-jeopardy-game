@@ -147,6 +147,22 @@ describe("Change", () => {
     ).toBeInTheDocument();
   });
 
+  it("marks an unestablished change without a symbol that looks like a broken glyph", () => {
+    // It was a literal `?`. Before a number in a monospace column, `? 199.22` reads as a
+    // character the font could not draw — and on a monthly report almost every row is
+    // unestablished, so the whole page looked broken rather than careful.
+    const { container } = render(<Change change={change({ direction: "unchanged" })} />);
+
+    expect(container.textContent).not.toContain("?");
+    // Nor may it claim near-equality: `≈` and `~` mean "the values matched", which is
+    // `flat`. "We could not tell them apart" is a different statement.
+    expect(container.textContent).not.toContain("≈");
+    expect(container.textContent).not.toContain("~");
+    // And no direction, since none was established.
+    expect(container.textContent).not.toContain("▲");
+    expect(container.textContent).not.toContain("▼");
+  });
+
   it("distinguishes unchanged from flat", () => {
     const unchanged = render(<Change change={change({ direction: "unchanged" })} />);
     const unchangedText = unchanged.container.textContent ?? "";
