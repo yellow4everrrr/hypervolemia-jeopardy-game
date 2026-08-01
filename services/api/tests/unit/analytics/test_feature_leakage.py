@@ -179,7 +179,33 @@ class TestTheFeatureSetAsAWhole:
     the whole feature space at once.
     """
 
-    def history(self, rng: random.Random, count: int = 600) -> list[TradeRecord]:
+    #: Sized from a measured sweep, not taste, and the sweep is the only thing that can
+    #: justify it — a single run cannot tell a reliable probe from a lucky one.
+    #:
+    #: Detection of the leaking feature set, across data seeds:
+    #:
+    #:   200 trades -> 2 of 6      250 trades -> 4 of 6      300 trades -> 12 of 12
+    #:
+    #: A probe that misses the defect two-thirds of the time certifies the property it
+    #: stopped checking, which is worse than not having it. At 300 the leaking set scored
+    #: 88-92% while the clean set never exceeded 52.3%, so the 70% threshold sits in a
+    #: wide gap rather than between two touching distributions.
+    #:
+    #: Reducing this is not a free saving. It was 600, which cost 40 seconds and made
+    #: this file the most expensive in the suite; 300 costs 9 and detects just as well.
+    #: Below 300 the saving comes out of the probe's power, which is the one thing it
+    #: has.
+    TRADES = 300
+
+    #: Ten null references at alpha 0.10 rather than the default nineteen at 0.05. Fewer
+    #: references make the structure test *laxer* — clusters are admitted more readily —
+    #: which is the conservative direction for both assertions here: the clean set is
+    #: handed structure more easily and still fails to encode the outcome, and the
+    #: leaking set is still detected 8 times out of 8. Halves the cost.
+    REFERENCES = 10
+    ALPHA = Decimal("0.10")
+
+    def history(self, rng: random.Random, count: int = TRADES) -> list[TradeRecord]:
         """Trades whose outcome is unrelated to when, how big, or how long.
 
         Built so the honest answer is "these clusters say nothing about P&L": hour, size,
@@ -217,12 +243,22 @@ class TestTheFeatureSetAsAWhole:
             )
         return trades
 
-    def separation(self, trades: list[TradeRecord]) -> float:
+    def separation(
+        self, trades: list[TradeRecord], features: tuple[Feature, ...]
+    ) -> float:
         """Best accuracy achievable by reading a cluster as a win/loss prediction."""
-        matrix = build_matrix(trades, features=FEATURES)
-        clustering = choose_clustering(matrix.rows, seed=20260731, references=20)
+        matrix = build_matrix(trades, features=features)
+        clustering = choose_clustering(
+            matrix.rows,
+            seed=20260731,
+            references=self.REFERENCES,
+            alpha=self.ALPHA,
+            # Two groups is where this leak expresses itself — winners against losers —
+            # and searching further k costs time without making the probe sharper.
+            max_k=2,
+        )
         if clustering is None:
-            return 0.5  # No structure found is the same as no information about outcome.
+            return 0.5  # No structure found says nothing about the outcome.
 
         best = 0.5
         for index in range(clustering.k):
@@ -254,11 +290,52 @@ class TestTheFeatureSetAsAWhole:
         drawing a line between "these groups happen to differ a little" and "these groups
         *are* the outcome", and only the second is a defect.
         """
-        accuracy = self.separation(self.history(random.Random(20260731)))
+        accuracy = self.separation(self.history(random.Random(20260731)), FEATURES)
 
         assert accuracy < 0.70, (
             f"clusters predict win/loss at {accuracy:.1%} on a history where outcome is "
             "independent of every feature — the feature space is encoding the result"
+        )
+
+    def test_the_probe_still_catches_the_excursion_pair(self) -> None:
+        """Guards the guard: the test above passes trivially if the probe is dead.
+
+        A clustering that finds nothing scores 0.5 and clears the 70% threshold with room
+        to spare, so a fixture that has lost its power stays green while proving nothing.
+        The removed pair is reconstructed here and the probe is required to reject it.
+
+        **What this catches and what it does not.** Measured by shrinking `TRADES`: it
+        fails at 150 and below, where the probe cannot see a 92%-accurate leak at all. It
+        does *not* fail at 200, because this particular seed is one of the minority where
+        200 still detects — across six seeds, 200 detected only twice. So this is a check
+        against the probe being dead, not a proof that it is reliable; the sizing note on
+        `TRADES` is where the reliability evidence lives, and that came from a sweep no
+        single-seed test can reproduce cheaply.
+        """
+        with_excursions = (
+            *FEATURES,
+            Feature(
+                name="mae_r",
+                description="maximum adverse excursion in R",
+                extract=lambda trade: trade.mae_r,
+                higher_is="went less far against you",
+                lower_is="went deep underwater before resolving",
+            ),
+            Feature(
+                name="mfe_r",
+                description="maximum favourable excursion in R",
+                extract=lambda trade: trade.mfe_r,
+                higher_is="offered a large move in your favour",
+                lower_is="never moved far in your favour",
+            ),
+        )
+
+        accuracy = self.separation(self.history(random.Random(20260731)), with_excursions)
+
+        assert accuracy >= 0.70, (
+            f"the excursion pair only reached {accuracy:.1%} — this fixture can no "
+            "longer detect a leak it is supposed to catch, so the test beside it proves "
+            "nothing"
         )
 
     def test_the_excursion_pair_is_what_would_break_it(self) -> None:
