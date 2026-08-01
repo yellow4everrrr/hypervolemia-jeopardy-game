@@ -72,7 +72,7 @@ function renderPage() {
 function stubJobs(jobs: unknown[]) {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (url: string) =>
+    vi.fn(async () =>
       new Response(JSON.stringify({ jobs, count: jobs.length }), {
         status: 200,
         headers: { "Content-Type": "application/json" },

@@ -196,21 +196,31 @@ test("captured chart images decode in the browser", async ({ page }) => {
   test.skip(outcome.captured.length === 0, `no bars for this trade: ${outcome.skipped}`);
 
   await page.goto(`/trades/${tradeId}`);
-  await page.waitForSelector("figure img", { timeout: 20_000 });
 
-  const images = await page.evaluate(() =>
-    Array.from(document.querySelectorAll<HTMLImageElement>("figure img")).map((image) => ({
-      complete: image.complete,
-      width: image.naturalWidth,
-    })),
-  );
+  // Each frame fetches independently and renders a placeholder until its own bytes
+  // arrive, so `figure img` matches only the images that have *already* resolved.
+  // Waiting for the first one and then sleeping a fixed interval asserts a count that is
+  // still being filled in: it passed locally and lost the race under CI load, failing
+  // with 6 expected against however many had landed. Both waits below retry until the
+  // condition holds, so the test measures the app rather than the runner's mood.
+  await expect(page.locator("figure img")).toHaveCount(6, { timeout: 30_000 });
 
-  expect(images.length, "no chart images rendered").toBe(6);
-  for (const image of images) {
-    expect(image.complete && image.width > 0, "an image element rendered but never decoded").toBe(
-      true,
+  const decoded = async () =>
+    page.evaluate(
+      () =>
+        Array.from(document.querySelectorAll<HTMLImageElement>("figure img")).filter(
+          (image) => image.complete && image.naturalWidth > 0,
+        ).length,
     );
-  }
+
+  // `naturalWidth`, not the element count: an `<img>` that 401s is still in the DOM and
+  // still has a `src`. Only decoding tells a served image from a blocked one.
+  await expect
+    .poll(decoded, {
+      timeout: 30_000,
+      message: "chart images rendered as elements but never decoded",
+    })
+    .toBe(6);
 });
 
 test("the replay opens on the entry rather than on an empty chart", async ({ page }) => {
