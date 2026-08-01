@@ -74,18 +74,16 @@ def get_object_store() -> ObjectStore:
     background worker needs the same one and a queue handler should not import the HTTP
     layer to find out where a file goes.
 
-    Cached, so the local in-memory store is one dict for the process rather than a fresh
-    empty one per request — without which every capture would be written to a store that
-    is discarded before anything can read it.
+    Cached so the store is built once per process rather than per request, which is worth
+    doing but is no longer load-bearing: the local store is a directory, so a fresh
+    instance finds everything an earlier one wrote.
 
-    **Locally the worker and the API do not share it.** Each process gets its own dict, so
-    a capture performed by the background sweep writes bytes the API cannot read, and the
-    gallery answers 404 for every frame while the rows sit in the database looking
-    healthy. Deployed, both processes point at the same bucket and the problem does not
-    exist — which is precisely why it is worth naming here, since the only place it
-    appears is the environment where it will be mistaken for a bug in the capture code.
-    Locally, use the per-trade ``POST`` endpoint, which renders inside the API process, or
-    run against MinIO by setting ``LEDGERLINE_S3_ENDPOINT_URL``.
+    That used to be a dict, and the dict caused a defect this docstring existed to warn
+    about. Two processes meant two stores, so a capture performed by the background worker
+    wrote bytes the API could not read; a restart meant a third, so the gallery listed six
+    frames from Postgres and 404'd on every one. Both were mistaken for bugs in the
+    capture code more than once, because from either side alone the system looks correct.
+    See :class:`FilesystemObjectStore`.
     """
     return build_object_store(get_settings())
 
