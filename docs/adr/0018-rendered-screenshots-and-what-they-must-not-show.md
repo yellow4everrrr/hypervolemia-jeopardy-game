@@ -104,10 +104,22 @@ that page passes either way.
 ## Consequences
 
 - Screenshots are re-renderable from bars, so losing the object store loses nothing
-  permanent. This is why the local store is an in-memory dict and why that is acceptable
-  here but not for secrets.
-- Locally the API and the worker each own a separate in-memory store, so bytes written by
-  the sweep are unreadable by the API and the gallery 404s while the rows look healthy.
-  Deployed, both point at the same bucket. Documented at `get_object_store`, because the
-  only environment it appears in is the one where it will be mistaken for a capture bug.
+  permanent. That argument was used to justify an in-memory dict as the local store, and
+  it does not survive contact with the local store, because *re-renderable* is not the
+  same as *re-rendered*. **Superseded — the local store is now a directory
+  (`FilesystemObjectStore`).**
+
+  The dict failed in two ways, both of which present as a broken capture pipeline and
+  neither of which any single component can detect:
+
+  - **A restart empties it.** The rows describing each capture are in Postgres and
+    survive, so the gallery lists six frames, the list endpoint reports six healthy
+    screenshots, and every image 404s. The database and the store disagree; nothing
+    compares them.
+  - **Two processes are two stores.** Bytes written by the worker are unreadable by the
+    API, so a queued capture appears to do nothing, permanently.
+
+  Both were investigated as capture bugs more than once before being recognised. The
+  argument that the data is cheap to lose was correct and beside the point: what was
+  expensive was the time spent debugging a system that was reporting success.
 - Manual uploads remain the escape hatch for anything the renderer cannot reproduce.

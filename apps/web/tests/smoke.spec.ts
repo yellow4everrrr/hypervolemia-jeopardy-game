@@ -185,8 +185,11 @@ test("captured chart images decode in the browser", async ({ page }) => {
   const { items } = (await trades.json()) as { items: { id: string }[] };
   const tradeId = items[0]!.id;
 
-  // Capture through the API process rather than the queue: locally each process owns its
-  // own in-memory object store, so bytes written by the worker are unreadable here.
+  // Capture synchronously rather than through the queue, so this test does not depend on
+  // a worker being up or on how long its poll interval is. It no longer has to: the local
+  // store is a directory shared by every process, so a queued capture would be readable
+  // here too. It used to be a dict per process, which made the queued path silently
+  // unreadable and is the defect `test_object_store.py` now covers.
   const captured = await page.request.post(
     `${apiBase}/replay/trades/${tradeId}/screenshots`,
     { headers },

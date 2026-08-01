@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from enum import StrEnum
 from functools import lru_cache
+from pathlib import Path
 from typing import Annotated, Literal
 
 from pydantic import Field, PostgresDsn, RedisDsn, SecretStr, field_validator
@@ -68,6 +69,16 @@ class Settings(BaseSettings):
     s3_endpoint_url: str | None = None
     s3_bucket: str = "ledgerline-media"
     s3_region: str = "us-east-1"
+    #: Where rendered screenshots go when there is no bucket — local development only.
+    #:
+    #: Outside the repository on purpose: the images are large, binary, and regenerable,
+    #: so a developer who has run the capture pipeline should not find their working tree
+    #: dirty. Under the home directory rather than a temporary one because the point of
+    #: this store is to *outlive* things, and a path the OS may clear would reintroduce
+    #: the failure it exists to remove.
+    object_storage_path: Path = Field(
+        default_factory=lambda: Path.home() / ".ledgerline" / "objects"
+    )
 
     # --- AI coach ----------------------------------------------------------------
     #: Read from the environment like every other credential. Absent means the coach
