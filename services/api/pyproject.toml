@@ -26,6 +26,18 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Screenshot storage for any deployed environment. `build_object_store` returns
+# `S3ObjectStore` whenever `is_deployed`, and that class imports aioboto3 lazily so the
+# tests and the domain carry no dependency on an AWS SDK.
+#
+# Lazy is not the same as optional, and for a while this was neither declared here nor
+# installed by the Dockerfile. The result was a deployment that booted, served every
+# request, and raised `RuntimeError: the 'aioboto3' package is required` at the *first
+# screenshot capture* — in production, where the local store is never used and so the
+# gap cannot appear. `_verify_object_storage` now refuses to start instead.
+s3 = [
+    "aioboto3>=13",
+]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",

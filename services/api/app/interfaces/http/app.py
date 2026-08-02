@@ -41,6 +41,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         version=settings.version,
     )
     _verify_secret_encryption(settings)
+    _verify_object_storage(settings)
     await _verify_tenant_isolation(settings)
     yield
     await dispose_engine()
@@ -68,6 +69,38 @@ def _verify_secret_encryption(settings: Settings) -> None:
     logger.info("app.secret_encryption_ready", keys=len(settings.secret_encryption_keys))
 
 
+def _verify_object_storage(settings: Settings) -> None:
+    """Refuse to start in a deployed environment that cannot store a screenshot.
+
+    ``S3ObjectStore`` imports ``aioboto3`` lazily, so that the domain, the tests and any
+    build that does not store screenshots carry no dependency on an AWS SDK. Lazy is not
+    the same as optional, and the package was for a while neither a declared dependency
+    nor installed by the Dockerfile.
+
+    That combination has the failure shape this codebase keeps producing. The process
+    boots, every endpoint answers, every health check passes — and the first screenshot
+    capture raises ``RuntimeError``. Only in a deployed environment, because locally the
+    store is a directory and this code never runs. The one place it would be found is
+    production, by a user.
+
+    Importing at startup is the whole check. It costs one import and converts a runtime
+    failure in front of a trader into a process that will not start, which is the same
+    trade `_verify_secret_encryption` makes for the same reason.
+    """
+    if not settings.is_deployed:
+        return
+
+    try:
+        import aioboto3  # noqa: F401
+    except ImportError as exc:
+        raise RuntimeError(
+            "screenshot storage needs the 'aioboto3' package in a deployed environment; "
+            'install the extra with `pip install ".[s3]"`'
+        ) from exc
+
+    logger.info("app.object_storage_ready", bucket=settings.s3_bucket)
+
+
 async def _verify_tenant_isolation(settings: Settings) -> None:
     """Refuse to start in production when row-level security is not actually enforced.
 
@@ -80,6 +113,19 @@ async def _verify_tenant_isolation(settings: Settings) -> None:
     Every downstream symptom of that is silence, so the check is loud: fatal in
     production, a warning elsewhere so local development against a superuser connection
     still works.
+
+    **"Could not check" is not "checked and fine."** This used to catch every exception,
+    log a warning and return — in all environments. So a production process that could
+    not reach the database at boot, or hit a permissions error inside the check, started
+    anyway with tenant isolation unverified, having logged one warning line. Measured: with
+    an unreachable database, ``LEDGERLINE_ENVIRONMENT=production`` reached "Application
+    startup complete" and served ``/health`` with a 200.
+
+    That is the same failure the check was written to prevent, one level up. A guard whose
+    own failure is non-fatal is a guard that reports success when it did nothing, so in
+    production an unrunnable check is now as fatal as a failed one. Everywhere else it
+    stays a warning, because a developer without a database running should still get a
+    process they can look at.
     """
     from app.infrastructure.db.session import get_sessionmaker
     from app.infrastructure.db.tenancy import assert_rls_effective
@@ -88,6 +134,13 @@ async def _verify_tenant_isolation(settings: Settings) -> None:
         async with get_sessionmaker()() as session:
             effective = await assert_rls_effective(session)
     except Exception as exc:
+        if settings.is_production:
+            raise RuntimeError(
+                "could not verify that row-level security is enforced, so tenant "
+                "isolation is unknown rather than confirmed. Refusing to start: the "
+                "state this check exists to catch is invisible from every other angle, "
+                f"and a skipped check proves nothing about it. Underlying error: {exc}"
+            ) from exc
         logger.warning("app.tenancy_check_skipped", error=str(exc))
         return
 
