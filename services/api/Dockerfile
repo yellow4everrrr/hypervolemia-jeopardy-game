@@ -19,7 +19,10 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Dependencies are installed from the project metadata alone first, so that editing
 # application code does not invalidate the (slow) dependency layer.
 COPY pyproject.toml ./
-RUN pip install --upgrade pip && pip install .
+# `.[s3]` rather than `.`: this image is the deployable artifact, and a deployed
+# environment stores screenshots in S3. Installing the bare project produced an image
+# that started, served every request, and failed at the first capture.
+RUN pip install --upgrade pip && pip install ".[s3]"
 
 COPY app ./app
 COPY migrations ./migrations

@@ -1,0 +1,46 @@
+# Fly.io deployment for the Next.js frontend.
+#
+# A separate app from the API rather than a second process group, because the two are
+# built from different Dockerfiles and scale on different signals — and because the API
+# URL has to be baked into this image at build time, which means a frontend change and a
+# backend change are not the same deploy.
+
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+  [build.args]
+    # **Build-time, not runtime.** Next inlines every `NEXT_PUBLIC_*` during `next build`,
+    # so setting these as secrets or in `[env]` has no effect whatsoever — the value is
+    # already a string literal inside the client bundle by then. Changing the API URL
+    # requires a rebuild, not a restart.
+    #
+    # This must be the API's public hostname, because the browser resolves it, not the
+    # server. A `.internal` address works for server-side fetches and fails for every
+    # request the page makes after it loads, which is most of them.
+    NEXT_PUBLIC_API_BASE = "https://ledgerline-api.fly.dev/api/v1"
+
+[env]
+  NODE_ENV = "production"
+  # `NEXT_PUBLIC_DEV_USER` is deliberately not set. It mirrors the API's
+  # `auth_dev_bypass`, which `get_settings` refuses to enable in a deployed environment,
+  # so sending the header would achieve nothing except making an unauthenticated request
+  # look intentional.
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    path = "/"
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "20s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
