@@ -24,6 +24,7 @@ the store factory would quietly alter.
 from __future__ import annotations
 
 import builtins
+import os
 from collections.abc import Callable
 from typing import Any
 
@@ -46,8 +47,29 @@ from app.interfaces.http.app import (
 KEY = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
 
 
+@pytest.fixture(autouse=True)
+def isolated_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run these tests against the settings they declare, and nothing else.
+
+    ``Settings`` reads `LEDGERLINE_*` from the process environment and from `.env`. Most
+    of the tests below assert what happens when a setting is *absent*, so a developer who
+    happens to export `LEDGERLINE_SECRET_ENCRYPTION_KEYS` — entirely reasonable, it is how
+    you run the app locally against a deployed-shaped config — would see them fail for a
+    reason that has nothing to do with the code.
+
+    CI has none of these set, so this changes nothing there. That is the argument for
+    adding it rather than against: a test that passes in CI and fails on one machine sends
+    whoever hits it looking for a defect that is not there.
+    """
+    for name in list(os.environ):
+        if name.startswith("LEDGERLINE_"):
+            monkeypatch.delenv(name, raising=False)
+
+
 def settings_for(environment: Environment, **overrides: Any) -> Settings:
-    return Settings(environment=environment, **overrides)
+    # `_env_file=None` so a `.env` sitting in the working directory cannot supply a value
+    # a test is asserting the absence of.
+    return Settings(_env_file=None, environment=environment, **overrides)
 
 
 def without_module(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
