@@ -173,8 +173,23 @@ Stated plainly, because a deployment that looks finished is the failure mode thi
 codebase is built around.
 
 - **Nothing has ever run against a live broker.** Tradovate sync is tested entirely
-  against fakes. Rate limits, reconnects, partial fills and cursor resumption after a
-  dropped socket are all unexercised. This is the largest untested surface in the project.
+  against fakes.
+
+  An earlier version of this line said rate limits, reconnects, partial fills and cursor
+  resumption were "all unexercised". That was wrong, and counting is what showed it: 96
+  tests under `tests/unit/tradovate/` plus 14 on the sync use case cover exactly those —
+  `test_rate_limit_statuses_raise_rate_limited`, `test_reconnect_triggers_a_rest_catch_up`
+  and the backoff-with-jitter set, seven tests on fills deferred for a missing order,
+  product, contract, maturity chain or fee record, and `test_cursor_stops_below_a_deferred
+  _fill`, `test_next_run_refetches_the_deferred_fill`, `test_cursor_never_moves_backwards`,
+  `test_failed_sync_leaves_the_cursor_alone`.
+
+  What is actually unverified is narrower and harder to close: **whether the fakes match
+  Tradovate.** The client treats 429 and 418 as rate limiting, expects a particular
+  penalty payload on a rejected login, and parses a specific WebSocket frame grammar. Each
+  of those is an assumption about someone else's API, and every test in the suite shares
+  it — so the suite cannot contradict it. Only a real account can, which is why connecting
+  one in the *demo* environment is the highest-value next step rather than more tests.
 - **No production environment has ever run this.** These files are written from the code,
   not from a deployment that has been observed working. Expect to find something.
 - **There is no backup policy here.** Fly Postgres snapshots are not a backup strategy,
