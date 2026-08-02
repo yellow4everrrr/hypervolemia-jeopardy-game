@@ -25,7 +25,7 @@ delivers and why the backend was built before the frontend.
 One command, with Docker, to a running journal with a year of trades in it:
 
 ```bash
-make demo        # builds the stack, waits for the API, seeds 1,447 trades
+make demo        # builds the stack, seeds a year of trades, queues the analyses
 ```
 
 Then open **http://localhost:3000**. No account, no broker, no configuration: the API

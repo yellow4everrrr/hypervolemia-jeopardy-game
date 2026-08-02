@@ -55,9 +55,11 @@ services:
       LEDGERLINE_LOG_JSON: "false"
       LEDGERLINE_AUTH_DEV_BYPASS: "true"
       LEDGERLINE_CORS_ORIGINS: http://localhost:3000
+      LEDGERLINE_OBJECT_STORAGE_PATH: /srv/objects
     ports:
       - "8000:8000"
     volumes:
+      - objects:/srv/objects
       # Bind-mounted for hot reload; the image still contains a complete copy so the
       # same Dockerfile builds a deployable artifact.
       - ../services/api/app:/srv/app:ro
@@ -66,6 +68,34 @@ services:
       - sh
       - -c
       - "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+  # The other half of the application. Without it the stack starts, serves every request
+  # and looks healthy, while Patterns, Simulator and Jobs sit on their empty states
+  # forever — because pattern scans, counterfactual sweeps and chart capture are queued
+  # work and nothing was draining the queue. Same image as the API, so a handler cannot
+  # drift from the code that enqueues it.
+  worker:
+    build:
+      context: ../services/api
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      LEDGERLINE_ENVIRONMENT: local
+      LEDGERLINE_DATABASE_URL: postgresql+asyncpg://ledgerline:ledgerline@postgres:5432/ledgerline
+      LEDGERLINE_REDIS_URL: redis://redis:6379/0
+      LEDGERLINE_LOG_JSON: "false"
+      # Shared with the API so a capture written by the worker is readable by the request
+      # that serves it. Locally the object store is a directory; two containers with two
+      # private directories would reproduce exactly the split ADR 0018 records.
+      LEDGERLINE_OBJECT_STORAGE_PATH: /srv/objects
+    volumes:
+      - ../services/api/app:/srv/app:ro
+      - objects:/srv/objects
+    command: ["python", "-m", "app.jobs.worker"]
 
   web:
     build:
@@ -90,3 +120,6 @@ services:
 
 volumes:
   postgres-data:
+  # Shared between the API and the worker. Chart captures are the one artefact that cannot
+  # be regenerated once the bars they were rendered from have moved on.
+  objects:
