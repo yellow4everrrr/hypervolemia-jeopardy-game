@@ -177,6 +177,27 @@ test("captured chart images decode in the browser", async ({ page }) => {
    * JSON error before `onerror` could fire. The page looked fine — heading, count,
    * captions, six figures — with six invisible broken images inside it. `naturalWidth`
    * is what tells them apart; every text assertion passes either way.
+   *
+   * **The 401s in the API log during this run are Playwright, not the app.** Watching the
+   * server while the smoke suite runs shows one 401 on `/replay/screenshots/{id}/image`
+   * arriving 30-60ms after each successful 200, which reads exactly like the defect above
+   * coming back. It is not. Measured both ways on the same build:
+   *
+   * | | 200s on `/image` | 401s |
+   * |---|---|---|
+   * | `--trace retain-on-failure` (the default here) | 18 | 18 |
+   * | `--trace off` | 18 | 0 |
+   *
+   * The authenticated requests are identical; only the 401s appear. `retain-on-failure`
+   * records a trace for every test and throws it away when the test passes, and the
+   * recorder re-requests page resources to embed them — without the headers the page's
+   * own `fetch` sent. Instrumenting the browser confirms the other direction: `page.on
+   * ("request")` sees exactly six requests per load, all with `X-Debug-User`, all 200.
+   *
+   * Worth writing down rather than leaving as folklore, because an unexplained 401 on an
+   * authenticated endpoint is precisely the shape of a real auth bug, and the next person
+   * to notice it will otherwise spend the same afternoon on it. It also means these logs
+   * cannot be used to detect a genuine auth regression during a traced run.
    */
   const apiBase = process.env.SMOKE_API_BASE ?? "http://127.0.0.1:8000/api/v1";
   const headers = { "X-Debug-User": process.env.SMOKE_DEV_USER ?? "demo" };
