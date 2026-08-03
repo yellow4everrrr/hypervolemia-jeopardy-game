@@ -90,8 +90,17 @@ demo: ## Bring the whole stack up with a year of demo data, ready to open
 	@until curl -sf http://localhost:8000/api/v1/trades -H 'X-Debug-User: demo' >/dev/null 2>&1; do sleep 2; done
 	docker compose -f infra/docker-compose.yml exec -T api python -m app.scripts.seed_instruments
 	docker compose -f infra/docker-compose.yml exec -T api python -m app.scripts.seed_demo
+	@# Pattern scans, counterfactual sweeps and chart capture are queued work, so a freshly
+	@# seeded stack has nothing to show on the three screens that read their results. This
+	@# queues them; the worker service drains the queue.
+	docker compose -f infra/docker-compose.yml exec -T api python -m app.scripts.seed_analysis
 	@echo ""
 	@echo "  Ledgerline is running:  http://localhost:3000"
+	@echo ""
+	@echo "  Dashboard, Trades and Reports have data now. Patterns, Simulator and the"
+	@echo "  chart galleries fill in as the worker works through the queue. Measured at"
+	@echo "  about four minutes: 105s to scan, 4s to capture, 131s to sweep, run in"
+	@echo "  series by one worker. The Jobs screen shows how far it has got."
 	@echo ""
 
 .PHONY: smoke
